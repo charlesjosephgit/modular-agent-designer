@@ -14,6 +14,7 @@ from ..config.schema import AgentConfig, EvalCondition, NodeRefConfig, RootConfi
 from ..models.registry import build_model_registry
 from ..nodes.agent_node import build_agent_node, build_sub_agent
 from ..nodes.custom import build_custom_node
+from ..skills.registry import build_skill_registry, build_skill_toolset
 from ..tools.registry import build_tool_registry
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,11 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     """Build a runnable Workflow from a validated RootConfig."""
     model_registry = build_model_registry(cfg.models)
     tool_registry = build_tool_registry(cfg.tools)
+    skill_registry = build_skill_registry(cfg.skills)
 
-    node_callables = _build_node_callables(cfg, model_registry, tool_registry)
+    node_callables = _build_node_callables(
+        cfg, model_registry, tool_registry, skill_registry
+    )
 
     adk_edges: list[Any] = []
 
@@ -200,6 +204,7 @@ def _build_node_callables(
     cfg: RootConfig,
     model_registry: dict,
     tool_registry: dict,
+    skill_registry: dict,
 ) -> dict[str, Any]:
     workflow_node_names = set(cfg.workflow.nodes)
 
@@ -229,16 +234,19 @@ def _build_node_callables(
         model = model_registry[agent_cfg.model]
         tools = [tool_registry[t] for t in agent_cfg.tools]
         resolved_sub_agents = [built_agents[sa] for sa in agent_cfg.sub_agents]
+        skill_toolset = build_skill_toolset(agent_cfg.skills, skill_registry)
 
         if agent_name in all_sub_agent_names:
             # Build as a plain Agent — not a workflow node.
             built_agents[agent_name] = build_sub_agent(
-                agent_name, agent_cfg, model, tools, resolved_sub_agents
+                agent_name, agent_cfg, model, tools, resolved_sub_agents,
+                skill_toolset,
             )
         else:
             # Build as a @node-wrapped workflow node.
             node = build_agent_node(
-                agent_name, agent_cfg, model, tools, resolved_sub_agents
+                agent_name, agent_cfg, model, tools, resolved_sub_agents,
+                skill_toolset,
             )
             built_agents[agent_name] = node
             callables[agent_name] = node

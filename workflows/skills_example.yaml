@@ -1,0 +1,58 @@
+# Example: using skills with agents.
+#
+# Skills are defined in a root-level `skills:` section with dotted refs
+# pointing to Python functions that return list[Skill].
+# Agents reference skills by alias name.
+#
+# Run:
+#   uv run modular-agent-designer run \
+#     workflows/skills_example.yaml --input '{"topic": "climate change"}'
+#
+# This example uses:
+#   - A built-in skill from the framework (summarizer)
+#   - A local skill from the project's skills/ folder (local_summary)
+#
+# The SkillToolset provides progressive disclosure:
+#   L1: Agent sees skill name + description at startup
+#   L2: Full instructions loaded only when the agent decides to use the skill
+#   L3: Resources (references, assets, scripts) loaded on demand
+
+name: skills_demo
+description: Demonstrates skills support with agents.
+
+models:
+  local:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+skills:
+  summarizer:
+    ref: modular_agent_designer.skills.summarize-text
+  local_summary:
+    ref: skills.summarize-text
+
+tools: {}
+
+agents:
+  researcher:
+    model: local
+    mode: task
+    instruction: |
+      You are a research assistant studying {{state.user_input.topic}}.
+
+      You have access to skills that provide specialized instructions.
+      To use a skill:
+      1. Call `list_skills` to see available skills.
+      2. Call `load_skill` with the skill name to get its instructions.
+      3. Follow the loaded instructions to complete the task.
+
+      Your task: Write a detailed paragraph about the topic, then
+      use the loaded skill instructions to create a concise summary.
+      After following the skill instructions, output your final answer
+      directly — do NOT call any tool named after the skill.
+    skills: [summarizer]
+
+workflow:
+  nodes: [researcher]
+  edges: []
+  entry: researcher

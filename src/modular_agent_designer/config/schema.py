@@ -154,11 +154,18 @@ ToolConfig = Annotated[
 ]
 
 
+class SkillConfig(BaseModel):
+    """A skill entry: dotted ref to a function returning list[Skill]."""
+    model_config = ConfigDict(extra="forbid")
+    ref: str
+
+
 class AgentConfig(BaseModel):
     type: Literal["agent"] = "agent"
     model: str
     instruction: str
     tools: list[str] = []
+    skills: list[str] = []
     output_schema: Optional[str] = None
     sub_agents: list[str] = []
     mode: Optional[Literal["chat", "task", "single_turn"]] = None
@@ -281,6 +288,7 @@ class RootConfig(BaseModel):
     description: str = ""
     models: dict[str, ModelConfig]
     tools: dict[str, ToolConfig] = {}
+    skills: dict[str, SkillConfig] = {}
     agents: dict[str, NodeEntry]
     workflow: WorkflowConfig
 
@@ -317,6 +325,12 @@ class RootConfig(BaseModel):
                         raise ValueError(
                             f"agent references tool '{tool_name}' "
                             f"which is not defined in tools"
+                        )
+                for skill_name in cfg.skills:
+                    if skill_name not in self.skills:
+                        raise ValueError(
+                            f"agent references skill '{skill_name}' "
+                            f"which is not defined in skills"
                         )
 
         # Validate sub_agent references.

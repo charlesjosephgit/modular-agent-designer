@@ -27,6 +27,7 @@ def build_sub_agent(
     model: LiteLlm,
     tools: list[Any],
     sub_agents: list[Any] = [],
+    skill_toolset: Any = None,
 ) -> Agent:
     """Build a plain ADK Agent for use as a sub-agent (not a workflow node).
 
@@ -34,11 +35,12 @@ def build_sub_agent(
     and no after_model_callback (thinking capture is for workflow nodes only).
     Their instructions are static — {{state.x}} templates are not supported.
     """
+    all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     agent_kwargs: dict[str, Any] = dict(
         name=agent_name,
         instruction=cfg.instruction,
         model=model,
-        tools=tools,
+        tools=all_tools,
         sub_agents=sub_agents,
     )
     if cfg.mode is not None:
@@ -58,8 +60,10 @@ def build_agent_node(
     model: LiteLlm,
     tools: list[Any],
     sub_agents: list[Any] = [],
+    skill_toolset: Any = None,
 ) -> Any:
     """Return an ADK-compatible node for a single YAML agent entry."""
+    all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     instruction_template = cfg.instruction
     output_schema_class = _load_output_schema(cfg.output_schema)
     # Cache Agent instances keyed by resolved instruction.  rerun_on_resume
@@ -83,7 +87,7 @@ def build_agent_node(
                 name=agent_name,
                 instruction=resolved_instruction,
                 model=model,
-                tools=tools,
+                tools=all_tools,
                 output_key=agent_name,
                 after_model_callback=make_capture_thinking_callback(agent_name),
                 sub_agents=sub_agents,

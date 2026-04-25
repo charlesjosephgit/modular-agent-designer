@@ -18,8 +18,10 @@ A modular framework for designing and orchestrating complex agentic workflows wi
     - `models/`: Registry and configuration for LLM providers.
     - `nodes/`: Implementation of `AgentNode` (LLM agents) and `CustomNode` wrappers.
     - `state/`: Logic for state templating (`template.py`) and state event creation (`writer.py`).
+    - `skills/`: Registry and built-in skills leveraging ADK's `SkillToolset`.
     - `tools/`: Registry for built-in and custom tools.
     - `workflow/`: Logic for building the ADK `Workflow` from YAML config (`builder.py`).
+- `skills/`: Example local skill directories (importable via dotted ref).
 - `tests/`: Comprehensive test suite using `pytest`.
 - `workflows/`: Example YAML workflow definitions.
 
@@ -57,10 +59,14 @@ uv run pytest -k "not ollama"
 ## Development Conventions
 
 ### YAML Schema
-Workflows are defined with five main sections: `name`, `models`, `tools`, `agents`, and `workflow`.
+Workflows are defined with six main sections: `name`, `models`, `tools`, `skills`, `agents`, and `workflow`.
 - **Agents**: Default to `type: agent`.
 - **Custom Nodes**: Use `type: node` and provide a `ref` to a dotted Python path (BaseNode subclass or @node function).
 - **Tools**: Supported types are `builtin`, `python`, `mcp_stdio`, `mcp_sse`, and `mcp_http`. MCP toolsets are wired via ADK's `McpToolset` and passed whole into `Agent(tools=[...])`. Connections open lazily and ADK's Runner handles teardown automatically. Header/env values may contain `${VAR}` placeholders expanded from the process environment at load time; missing variables fail fast.
+- **Skills**: Defined in the root-level `skills:` section with a dotted `ref` pointing to a Python package containing a skill directory (e.g., `modular_agent_designer.skills.summarize-text`). Agents reference skills by alias name. Skills leverage ADK's native `SkillToolset` for progressive disclosure (L1 metadata → L2 instructions → L3 resources). Skills can come from:
+  - **Internal**: `modular_agent_designer.skills.*` (shipped with the framework)
+  - **External**: Any pip-installed package exporting skill directories
+  - **Local**: A `skills/` folder next to the YAML or in CWD (auto-added to `sys.path`)
 
 ### Model Configuration
 Model strings MUST be prefixed with the provider-specific string (e.g., `gemini/`, `anthropic/`, `ollama/`). This is enforced at load time via Pydantic validators in `src/modular_agent_designer/config/schema.py`.
@@ -77,6 +83,7 @@ API keys should be set as environment variables:
 
 ### Adding Features
 - **New Tools**: Register in `src/modular_agent_designer/tools/registry.py`.
+- **New Skills**: Create a skill directory with a `SKILL.md` file, then reference it in YAML via `skills: { my_skill: { ref: my.package.skill-name } }`. See `src/modular_agent_designer/skills/summarize-text/` for an example.
 - **New Node Types**: Implement in `src/modular_agent_designer/nodes/` and update `src/modular_agent_designer/config/schema.py`.
 ### Telemetry and Tracing
 - **MLflow Traces**: Enable with `--mlflow EXPERIMENT_ID`. Spans are sent via OTLP (defaulting to localhost:4318) with the `x-mlflow-experiment-id` header set to the provided ID.
