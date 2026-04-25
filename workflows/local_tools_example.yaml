@@ -1,0 +1,64 @@
+# Example: referencing a custom tool from the project-root tools/ directory.
+#
+# The `tools/` package lives OUTSIDE the modular_agent_designer package —
+# no changes to the framework are needed and no pip install is required.
+#
+# Layout expected when running from the project root:
+#
+#   tools/
+#     __init__.py          (empty)
+#     text_tools.py        (contains word_count, extract_keywords, summarize_stats)
+#   workflows/
+#     local_tools_example.yaml   (this file)
+#
+# How it works:
+#   `modular-agent-designer` automatically adds the CWD and the YAML's
+#   directory to sys.path at startup, so `tools.text_tools` is importable
+#   as long as you run the CLI from the project root.
+#
+# Run:
+#   uv run modular-agent-designer run \
+#     workflows/local_tools_example.yaml \
+#     --input '{"text": "The quick brown fox jumps over the lazy dog. AI agents are transforming how we build software pipelines."}'
+
+name: local_tools_demo
+description: >
+  Demonstrates referencing custom tool callables from a local tools/ directory
+  in the project root — no pip install required.
+
+models:
+  local:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+tools:
+  word_count:
+    type: python
+    ref: tools.text_tools.word_count
+
+  extract_keywords:
+    type: python
+    ref: tools.text_tools.extract_keywords
+
+  summarize_stats:
+    type: python
+    ref: tools.text_tools.summarize_stats
+
+agents:
+  text_analyst:
+    model: local
+    instruction: |
+      Analyze the following text provided by the user:
+
+        "{{state.user_input.text}}"
+
+      Steps:
+      1. Call summarize_stats with the text to get word count and top keywords.
+      2. Report the statistics clearly to the user.
+      3. Comment briefly on what the keywords suggest about the text's topic.
+    tools: [word_count, extract_keywords, summarize_stats]
+
+workflow:
+  nodes: [text_analyst]
+  edges: []
+  entry: text_analyst

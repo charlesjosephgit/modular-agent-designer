@@ -1,0 +1,42 @@
+name: topic_router
+description: A workflow that routes to different agents based on topic classification.
+
+models:
+  local_fast:
+    provider: ollama
+    model: ollama/gemma4:e4b
+
+agents:
+  classifier:
+    model: local_fast
+    instruction: |
+      Classify the following topic as either 'technical' or 'creative'.
+      Topic: {{state.user_input.topic}}
+      
+      Output ONLY the word 'technical' or 'creative' with no other text.
+
+  tech_expert:
+    model: local_fast
+    instruction: |
+      Explain the technical aspects of: {{state.user_input.topic}}
+      Focus on architecture and implementation details.
+
+  creative_expert:
+    model: local_fast
+    instruction: |
+      Write a creative story or poem about: {{state.user_input.topic}}
+      Focus on imagery and emotion.
+
+workflow:
+  nodes:
+    - classifier
+    - tech_expert
+    - creative_expert
+  entry: classifier
+  edges:
+    - from: classifier
+      to: tech_expert
+      condition: technical
+    - from: classifier
+      to: creative_expert
+      condition: creative

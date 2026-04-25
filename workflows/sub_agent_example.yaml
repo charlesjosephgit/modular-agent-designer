@@ -1,0 +1,53 @@
+name: sub_agent_research
+description: |
+  Coordinator/specialist pattern using sub-agents.
+  The coordinator delegates search and analysis to specialist sub-agents at runtime.
+  Sub-agents are invoked by the coordinator's LLM — not by workflow edges.
+
+models:
+  local_fast:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+    thinking: { reasoning_effort: high }
+
+agents:
+  # Specialist sub-agents — NOT in workflow.nodes.
+  # mode: single_turn wraps each as a callable tool the coordinator can invoke.
+  search_specialist:
+    model: local_fast
+    instruction: |
+      You are a search specialist. Search for factual information on the given topic.
+      Return a concise summary of your findings with key facts.
+    mode: single_turn
+
+  analysis_specialist:
+    model: local_fast
+    instruction: |
+      You are an analysis specialist. Given research findings, identify the three most
+      important themes and explain why they matter.
+    mode: single_turn
+
+  # Coordinator is the only workflow node.
+  # It decides at runtime which specialists to invoke.
+  coordinator:
+    model: local_fast
+    mode: task
+    instruction: |
+      You are a research coordinator. The user wants to learn about: {{state.user_input.topic}}.
+
+      You have two specialist sub-agents available:
+        - search_specialist: finds factual information
+        - analysis_specialist: identifies themes from research findings
+
+      Coordinate a thorough research process:
+      1. Delegate search to search_specialist
+      2. Pass the findings to analysis_specialist for theme identification
+      3. Synthesize both outputs into a final 200-word brief
+    sub_agents:
+      - search_specialist
+      - analysis_specialist
+
+workflow:
+  nodes: [coordinator]
+  edges: []
+  entry: coordinator

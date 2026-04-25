@@ -1,0 +1,50 @@
+name: research_assistant
+description: Three-stage research workflow — local researcher, Gemini analyst, Claude writer.
+
+models:
+  local_fast:
+    provider: ollama
+    model: ollama/gemma4:e4b
+
+tools:
+  fetch:
+    type: builtin
+    name: fetch_url
+
+
+agents:
+  researcher:
+    model: local_fast
+    instruction: |
+      Research the topic: {{state.user_input.topic}}.
+      Return 5 bullet point findings about this topic.
+    tools: [fetch]
+
+  analyst:
+    model: local_fast
+    instruction: |
+      Given these research findings:
+      {{state.researcher}}
+
+      Identify the three most important themes. Return a numbered list.
+
+  writer:
+    model: local_fast
+    instruction: |
+      Write a 300-word brief using these themes:
+      {{state.analyst}}
+
+      Cite the original findings:
+      {{state.researcher}}
+
+workflow:
+  nodes:
+    - researcher
+    - analyst
+    - writer
+  edges:
+    - from: researcher
+      to: analyst
+    - from: analyst
+      to: writer
+  entry: researcher

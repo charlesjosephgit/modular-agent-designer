@@ -1,0 +1,75 @@
+name: complex_conditions_demo
+description: "Demonstrates complex branching with multiple conditions, lists of values, and default fallbacks."
+
+models:
+  ollama:
+    provider: ollama
+    model: "ollama/gemma4:e4b"
+
+agents:
+  classifier:
+    model: ollama
+    instruction: |
+      Classify the user input into one of: 'tech', 'creative', 'billing', 'sales', or 'other'.
+      Return ONLY the word.
+  
+  tech_expert:
+    model: ollama
+    instruction: "You are a technical support expert. Help the user with their tech question: {{state.user_input.text}}"
+  
+  creative_expert:
+    model: ollama
+    instruction: "You are a creative writing assistant. Help the user with their creative request: {{state.user_input.text}}"
+  
+  business_expert:
+    model: ollama
+    instruction: "You are a business and sales specialist. Help the user with their business inquiry: {{state.user_input.text}}"
+  
+  general_help:
+    model: ollama
+    instruction: "You are a general purpose assistant. Help the user with their request: {{state.user_input.text}}"
+
+  vip_handler:
+    model: ollama
+    instruction: "You are a premium concierge for VIP customers. Provide white-glove support for their request: {{state.user_input.text}}"
+
+workflow:
+  entry: classifier
+  nodes:
+    - classifier
+    - tech_expert
+    - creative_expert
+    - business_expert
+    - general_help
+    - vip_handler
+  edges:
+    # Eval condition — Python expression checked against state.
+    # Evaluated first; if the user is a VIP, skip the classifier result
+    # and route straight to the VIP handler.
+    # Available variables: state (full session state dict),
+    #                      input (stripped node output string),
+    #                      raw_input (raw node output value)
+    - from: classifier
+      to: vip_handler
+      condition:
+        eval: "state.get('user_input', {}).get('is_vip') == True"
+
+    # Single condition
+    - from: classifier
+      to: tech_expert
+      condition: "tech"
+
+    # Another single condition
+    - from: classifier
+      to: creative_expert
+      condition: "creative"
+
+    # List of conditions (OR logic)
+    - from: classifier
+      to: business_expert
+      condition: ["billing", "sales"]
+
+    # Fallback route using the 'default' keyword
+    - from: classifier
+      to: general_help
+      condition: default

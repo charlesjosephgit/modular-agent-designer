@@ -1,0 +1,23 @@
+name: hello_world
+description: Single-agent sanity check using a local Ollama model.
+
+models:
+  local_fast:
+    provider: ollama
+    model: ollama/gemma4:e4b
+    thinking: { reasoning_effort: high }
+
+tools: {}
+
+agents:
+  greeter:
+    model: local_fast
+    instruction: |
+      The user gave you this topic: {{state.user_input.topic}}
+      Write a single friendly sentence greeting about that topic.
+
+workflow:
+  nodes:
+    - greeter
+  edges: []
+  entry: greeter

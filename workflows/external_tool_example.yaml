@@ -1,0 +1,53 @@
+# Example: using a Python tool from a SEPARATE pip-installed package.
+#
+# Tool callables are loaded by dotted import path, so any package installed
+# in the same Python environment can be referenced — no in-repo changes needed.
+#
+# To run this example, create a tiny package alongside your YAML files:
+#
+#   mycompany_tools/__init__.py     (empty)
+#   mycompany_tools/weather.py:
+#       def get_forecast(city: str) -> str:
+#           """Return today's forecast for `city`."""
+#           return f"Sunny in {city}, 22°C."
+#
+# Install it editable so it's importable:
+#   uv pip install -e ./mycompany_tools --prerelease=allow
+#
+# Then run:
+#   uv run modular-agent-designer run \
+#     workflows/external_tool_example.yaml --input '{"city": "Paris"}'
+#
+# The `ref:` field accepts any dotted path of the form
+# `<module.path>.<callable>` where the module is importable in the current env.
+#
+# To use a tool that ships with the framework (like fetch_url), prefer:
+#   type: builtin
+#   name: fetch_url
+# For arbitrary user-supplied or third-party callables, use `type: python`.
+
+name: external_tool_demo
+description: Demonstrates referencing a tool callable from an external pip-installed package.
+
+models:
+  local:
+    provider: ollama
+    model: ollama/gemma4:e4b
+
+tools:
+  forecast:
+    type: python
+    ref: mycompany_tools.weather.get_forecast
+
+agents:
+  weather_reporter:
+    model: local
+    instruction: |
+      The user wants the weather forecast for {{state.user_input.city}}.
+      Call the forecast tool with that city and report the result clearly.
+    tools: [forecast]
+
+workflow:
+  nodes: [weather_reporter]
+  edges: []
+  entry: weather_reporter
