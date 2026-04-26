@@ -45,6 +45,8 @@ def build_sub_agent(
     )
     if cfg.mode is not None:
         agent_kwargs["mode"] = cfg.mode
+    if cfg.include_contents != "default":
+        agent_kwargs["include_contents"] = cfg.include_contents
     if cfg.disallow_transfer_to_parent:
         agent_kwargs["disallow_transfer_to_parent"] = True
     if cfg.disallow_transfer_to_peers:
@@ -95,7 +97,9 @@ def build_agent_node(
             if cfg.mode is not None:
                 agent_kwargs["mode"] = cfg.mode
             elif tools or sub_agents:
-                agent_kwargs["mode"] = "task"
+                agent_kwargs["mode"] = "chat"
+            if cfg.include_contents != "default":
+                agent_kwargs["include_contents"] = cfg.include_contents
             if output_schema_class is not None:
                 agent_kwargs["output_schema"] = output_schema_class
             _agent_cache[resolved_instruction] = Agent(**agent_kwargs)

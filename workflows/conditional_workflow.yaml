@@ -17,6 +17,7 @@ agents:
 
   tech_expert:
     model: local_fast
+    mode: chat
     instruction: |
       Explain the technical aspects of: {{state.user_input.topic}}
       Focus on architecture and implementation details.

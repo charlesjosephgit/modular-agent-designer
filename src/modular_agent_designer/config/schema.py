@@ -169,6 +169,7 @@ class AgentConfig(BaseModel):
     output_schema: Optional[str] = None
     sub_agents: list[str] = []
     mode: Optional[Literal["chat", "task", "single_turn"]] = None
+    include_contents: Literal["default", "none"] = "default"
     disallow_transfer_to_parent: bool = False
     disallow_transfer_to_peers: bool = False
 

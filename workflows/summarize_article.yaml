@@ -1,0 +1,48 @@
+name: summarize_article
+description: Summarizes an article into a structured ArticleSummary schema.
+
+models:
+  local_fast:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+tools: {}
+
+agents:
+  summarizer:
+    model: local_fast
+    output_schema: schemas.article.ArticleSummary
+    instruction: |
+      You are a concise article summarizer.
+
+      Article text:
+      {{state.user_input.article}}
+
+      Return a structured summary with:
+      - title: a short descriptive title for the article
+      - bullets: 3–5 key takeaway bullet points
+      - sentiment: overall sentiment (positive, neutral, or negative)
+      - word_count_estimate: your rough estimate of the article's word count
+
+  recommender:
+    model: local_fast
+    mode: single_turn
+    include_contents: none
+    instruction: |
+      You are a content recommender. Based on the article summary below, suggest 3 related topics the reader should explore next.
+
+      Article title: {{state.summarizer.title}}
+      Key points:
+      {{state.summarizer.bullets}}
+      Sentiment: {{state.summarizer.sentiment}}
+
+      List 3 related topics with a one-sentence explanation for each.
+
+workflow:
+  nodes:
+    - summarizer
+    - recommender
+  edges:
+    - from: summarizer
+      to: recommender
+  entry: summarizer
