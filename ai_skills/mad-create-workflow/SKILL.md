@@ -17,12 +17,17 @@ This creates `<agent_name>/` with:
 
 ```
 <agent_name>/
-  <agent_name>.yaml   # single-agent Ollama workflow — edit this
-  agent.py            # Python entry point that loads and builds the workflow
-  __init__.py         # makes the folder a Python package
+  <agent_name>.yaml          # single-agent Ollama workflow — edit this
+  agent.py                   # Python entry point that loads and builds the workflow
+  __init__.py                # makes the folder a Python package
   tools/
-    __init__.py       # add custom tool functions here
-  README.md           # per-agent quickstart
+    __init__.py              # add custom tool functions here (see comments)
+  prompts/
+    __init__.py              # explains the prompts/ convention
+    <agent_name>__responder.txt  # starter prompt for the responder agent
+  schemas/
+    __init__.py              # add Pydantic output schema classes here (see comments)
+  README.md                  # per-agent quickstart
 ```
 
 Run the scaffold immediately to verify your setup:
@@ -105,7 +110,9 @@ For full coverage of Python functions, MCP stdio/SSE/HTTP, and collision avoidan
 
 ## Step 3 — Write Agent Instructions
 
-Instructions are Jinja-like templates resolved at node execution time:
+Instructions are Jinja-like templates resolved at node execution time. Two forms:
+
+**Inline** (short prompts, quick iteration):
 
 ```yaml
 agents:
@@ -117,17 +124,28 @@ agents:
       Use the fetch tool to retrieve relevant pages.
       Output a structured summary with key facts.
     tools: [fetch]
-
-  writer:
-    model: claude
-    instruction: |
-      You have this research: {{state.researcher}}
-
-      Write a polished 300-word article about {{state.user_input.topic}}.
 ```
+
+**Prompt file** (longer prompts; keeps YAML clean):
+
+```yaml
+agents:
+  researcher:
+    model: claude
+    instruction_file: prompts.my_workflow__researcher
+    tools: [fetch]
+```
+
+- `instruction_file` takes a dotted ref: dots → path separators, `.txt` appended automatically.
+- Resolved from the project root (cwd), so `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.txt`.
+- The scaffolder creates `prompts/` with an `__init__.py` and a sample `.txt` to start from.
+- `instruction` and `instruction_file` are mutually exclusive.
+
+**Template syntax (both forms):**
 
 - `{{state.user_input.key}}` — reads from the `--input` JSON argument.
 - `{{state.agent_name}}` — reads the output of a prior node.
+- Nested refs work: `{{state.user_input.config.mode}}`.
 - Missing key → `StateReferenceError` with the exact path and available keys listed. Use this to debug.
 
 ---
@@ -286,3 +304,6 @@ uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": 
 | Mixing unconditional + conditional edges from same source | Pydantic error at load time | Use only one type per source node |
 | `condition: default` with no other edges from that source | Works but unnecessary | Remove it for a clean unconditional edge |
 | Sub-agent listed in `workflow.nodes` | Pydantic error: sub-agents must not be workflow nodes | Remove it from `nodes:` |
+| `instruction_file: ../prompts/file.txt` (old path style) | `ValueError: not a valid dotted ref` at load time | Use dotted syntax: `instruction_file: prompts.my_workflow__agent` |
+| `instruction_file` path not found | `ValueError: instruction_file not found: <path>` | Run CLI from project root; file must be at `<cwd>/prompts/…` |
+| Both `instruction:` and `instruction_file:` set | `ValueError: not both` at load time | Remove one; they are mutually exclusive |

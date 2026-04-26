@@ -163,7 +163,15 @@ class SkillConfig(BaseModel):
 class AgentConfig(BaseModel):
     type: Literal["agent"] = "agent"
     model: str
-    instruction: str
+    instruction: Optional[str] = None
+    instruction_file: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dotted ref to a prompt file resolved from cwd, e.g. "
+            "'prompts.my_workflow__my_agent' → "
+            "<cwd>/prompts/my_workflow__my_agent.txt"
+        ),
+    )
     tools: list[str] = []
     skills: list[str] = []
     output_schema: Optional[str] = None
@@ -172,6 +180,20 @@ class AgentConfig(BaseModel):
     include_contents: Literal["default", "none"] = "default"
     disallow_transfer_to_parent: bool = False
     disallow_transfer_to_peers: bool = False
+
+    @model_validator(mode="after")
+    def _validate_instruction(self) -> "AgentConfig":
+        has_inline = self.instruction is not None
+        has_file = self.instruction_file is not None
+        if has_inline and has_file:
+            raise ValueError(
+                "Specify either 'instruction' or 'instruction_file', not both"
+            )
+        if not has_inline and not has_file:
+            raise ValueError(
+                "One of 'instruction' or 'instruction_file' is required"
+            )
+        return self
 
 
 class NodeRefConfig(BaseModel):

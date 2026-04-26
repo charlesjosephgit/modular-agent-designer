@@ -120,3 +120,99 @@ def test_error_message_contains_path(tmp_path: Path) -> None:
     with pytest.raises(ValueError) as exc_info:
         load_workflow(p)
     assert str(p) in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# instruction_file tests
+# ---------------------------------------------------------------------------
+
+_BASE_YAML = textwrap.dedent("""\
+    name: test_wf
+    models:
+      local:
+        provider: ollama
+        model: ollama/gemma4:e4b
+    agents:
+      step_one:
+        model: local
+        {instruction_field}
+    workflow:
+      nodes: [step_one]
+      edges: []
+      entry: step_one
+""")
+
+
+def test_instruction_file_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "my_prompt.txt").write_text("Hello {{state.user_input.name}}.")
+    yaml_text = _BASE_YAML.format(
+        instruction_field="instruction_file: prompts.my_prompt"
+    )
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    cfg = load_workflow(p)
+    from modular_agent_designer.config.schema import AgentConfig
+    agent = cfg.agents["step_one"]
+    assert isinstance(agent, AgentConfig)
+    assert agent.instruction == "Hello {{state.user_input.name}}."
+    assert agent.instruction_file is None
+
+
+def test_instruction_file_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    yaml_text = _BASE_YAML.format(
+        instruction_field="instruction_file: prompts.does_not_exist"
+    )
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match="step_one"):
+        load_workflow(p)
+
+
+def test_instruction_file_invalid_dotted_ref_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    yaml_text = _BASE_YAML.format(
+        instruction_field="instruction_file: ../prompts/my_agent.txt"
+    )
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match="not a valid dotted ref"):
+        load_workflow(p)
+
+
+def test_both_instruction_and_file_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "p.txt").write_text("hi")
+    yaml_text = textwrap.dedent("""\
+        name: test_wf
+        models:
+          local:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          step_one:
+            model: local
+            instruction: hi
+            instruction_file: prompts.p
+        workflow:
+          nodes: [step_one]
+          edges: []
+          entry: step_one
+    """)
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match="not both"):
+        load_workflow(p)
+
+
+def test_neither_instruction_nor_file_raises(tmp_path: Path) -> None:
+    yaml_text = _BASE_YAML.format(instruction_field="tools: []")
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match="required"):
+        load_workflow(p)

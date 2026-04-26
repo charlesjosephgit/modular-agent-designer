@@ -26,6 +26,9 @@ def test_create_generates_expected_files():
         assert (folder / "__init__.py").exists()
         assert (folder / "README.md").exists()
         assert (folder / "tools" / "__init__.py").exists()
+        assert (folder / "prompts" / "__init__.py").exists()
+        assert (folder / "prompts" / "demo_agent__responder.txt").exists()
+        assert (folder / "schemas" / "__init__.py").exists()
 
 
 def test_create_agent_py_content():
@@ -115,4 +118,4 @@ def test_create_success_message_shows_next_steps():
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["create", "demo"], catch_exceptions=False)
         assert "ollama" in result.output.lower()
-        assert "adk web" in result.output
+        assert "Next steps" in result.output

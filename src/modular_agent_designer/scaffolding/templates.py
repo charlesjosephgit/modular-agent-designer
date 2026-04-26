@@ -24,9 +24,7 @@ tools: {{}}
 agents:
   responder:
     model: local
-    instruction: |
-      The user said: {{{{state.user_input.message}}}}
-      Reply in one short, friendly sentence.
+    instruction_file: {name}.prompts.{name}__responder
 
 workflow:
   entry: responder
@@ -38,6 +36,59 @@ workflow:
 _INIT_PY = """\
 # This file makes the agent folder a Python package.
 # Do not delete this file.
+"""
+
+_PROMPTS_INIT_PY = """\
+# prompts/__init__.py
+#
+# Store agent prompt files in this directory as plain .txt files.
+# Each file corresponds to one agent's instruction.
+#
+# Naming convention: <workflow>__<agent>.txt
+# Example: {name}__responder.txt
+#
+# Reference a prompt file in {name}.yaml using a dotted ref:
+#
+#   agents:
+#     responder:
+#       instruction_file: {name}.prompts.{name}__responder
+#
+# Dots are folder separators; .txt is appended automatically.
+# The path is resolved from the project root (cwd where the CLI runs).
+#
+# {{{{state.x}}}} and {{{{state.x.y.z}}}} template syntax works inside prompt
+# files — resolved at node-execution time, not load time.
+"""
+
+_PROMPTS_SAMPLE_TXT = """\
+The user said: {{state.user_input.message}}
+Reply in one short, friendly sentence.
+"""
+
+_SCHEMAS_INIT_PY = """\
+# schemas/__init__.py
+#
+# Define Pydantic v2 output schemas for agents in this workflow.
+# Each class becomes the value of `output_schema:` in the YAML.
+#
+# Example schema (add to a new file, e.g. schemas/response.py):
+#
+#   from pydantic import BaseModel
+#
+#   class Response(BaseModel):
+#       answer: str
+#       confidence: float
+#
+# Wire it in {name}.yaml:
+#
+#   agents:
+#     responder:
+#       model: local
+#       output_schema: {name}.schemas.response.Response
+#
+# ADK validates the agent's output against the schema and stores it as a JSON
+# string in state[agent_name]. Downstream agents receive it via
+# {{{{state.responder}}}}.
 """
 
 _TOOLS_INIT_PY = """\
@@ -106,4 +157,7 @@ def render(name: str) -> dict[str, str]:
         "__init__.py": _INIT_PY,
         "README.md": _README.format(name=name),
         "tools/__init__.py": _TOOLS_INIT_PY.format(name=name),
+        "prompts/__init__.py": _PROMPTS_INIT_PY.format(name=name),
+        f"prompts/{name}__responder.txt": _PROMPTS_SAMPLE_TXT,
+        "schemas/__init__.py": _SCHEMAS_INIT_PY.format(name=name),
     }

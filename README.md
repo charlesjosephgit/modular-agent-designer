@@ -125,8 +125,10 @@ tools:
 agents:
   <agent_name>:
     model: <model_alias>          # reference to models section
-    instruction: |
+    instruction: |               # inline prompt (use for short, simple prompts)
       Template text with {{state.key}} or {{state.nested.key}} refs.
+    # -- OR --
+    instruction_file: prompts.my_agent  # dotted ref → <cwd>/prompts/my_agent.txt
     tools: [tool_alias, ...]      # optional; references to tools section
     output_schema: pkg.Module.Class  # optional; Pydantic v2 class
 
@@ -286,6 +288,25 @@ workflow:
 - Sub-agent instructions are **static** — `{{state.x}}` templates are not resolved (only the parent's instruction supports templating).
 - Circular sub-agent references (A→B→A) are rejected at load time.
 - Nested sub-agents are supported: a sub-agent can itself have sub-agents. Build order is resolved automatically.
+
+---
+
+## External Prompt Files
+
+For longer prompts, store the text in a separate file and reference it with `instruction_file`:
+
+```yaml
+agents:
+  researcher:
+    model: local
+    instruction_file: prompts.research_assistant__researcher
+```
+
+- Dots are folder separators; `.txt` is appended automatically. The ref above resolves to `<cwd>/prompts/research_assistant__researcher.txt`.
+- Resolution is from the **project root (cwd where the CLI runs)**, not the YAML file's directory.
+- The recommended layout is a top-level `prompts/` directory at the repo root, with files named `<workflow>__<agent>.txt`.
+- `{{state.x}}` and `{{state.x.y.z}}` template syntax works identically inside prompt files — resolved at node-execution time, not load time.
+- `instruction` and `instruction_file` are mutually exclusive; exactly one must be set per agent.
 
 ---
 

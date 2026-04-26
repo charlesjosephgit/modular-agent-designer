@@ -15,16 +15,12 @@ agents:
   # mode: single_turn wraps each as a callable tool the coordinator can invoke.
   search_specialist:
     model: local_fast
-    instruction: |
-      You are a search specialist. Search for factual information on the given topic.
-      Return a concise summary of your findings with key facts.
+    instruction_file: prompts.sub_agent_example__search_specialist
     mode: single_turn
 
   analysis_specialist:
     model: local_fast
-    instruction: |
-      You are an analysis specialist. Given research findings, identify the three most
-      important themes and explain why they matter.
+    instruction_file: prompts.sub_agent_example__analysis_specialist
     mode: single_turn
 
   # Coordinator is the only workflow node.
@@ -32,17 +28,7 @@ agents:
   coordinator:
     model: local_fast
     mode: task
-    instruction: |
-      You are a research coordinator. The user wants to learn about: {{state.user_input.topic}}.
-
-      You have two specialist sub-agents available:
-        - search_specialist: finds factual information
-        - analysis_specialist: identifies themes from research findings
-
-      Coordinate a thorough research process:
-      1. Delegate search to search_specialist
-      2. Pass the findings to analysis_specialist for theme identification
-      3. Synthesize both outputs into a final 200-word brief
+    instruction_file: prompts.sub_agent_example__coordinator
     sub_agents:
       - search_specialist
       - analysis_specialist

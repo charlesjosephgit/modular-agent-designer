@@ -13,32 +13,15 @@ agents:
   validator:
     model: fast
     output_schema: "schemas.validation.ValidationResult"
-    instruction: |
-      You are a strict input validator.
-      Evaluate the following input and decide if it is valid:
-
-        {{state.user_input}}
-
-      Rules:
-        - Must be non-empty
-        - Must be a complete sentence (ends with punctuation)
-        - Must be in English
-
-      Return a JSON object with:
-        - validation_result: "success" if all rules pass, "fail" otherwise
-        - reason: one sentence explaining your decision
+    instruction_file: prompts.output_schema_routing__validator
 
   process_node:
     model: fast
-    instruction: |
-      The input passed validation. Process it helpfully:
-        {{state.user_input}}
+    instruction_file: prompts.output_schema_routing__process_node
 
   reject_node:
     model: fast
-    instruction: |
-      The input failed validation for this reason: {{state.validator.reason}}
-      Politely explain the problem and ask the user to try again.
+    instruction_file: prompts.output_schema_routing__reject_node
 
 workflow:
   entry: validator

@@ -12,31 +12,13 @@ agents:
   summarizer:
     model: local_fast
     output_schema: schemas.article.ArticleSummary
-    instruction: |
-      You are a concise article summarizer.
-
-      Article text:
-      {{state.user_input.article}}
-
-      Return a structured summary with:
-      - title: a short descriptive title for the article
-      - bullets: 3–5 key takeaway bullet points
-      - sentiment: overall sentiment (positive, neutral, or negative)
-      - word_count_estimate: your rough estimate of the article's word count
+    instruction_file: prompts.summarize_article__summarizer
 
   recommender:
     model: local_fast
     mode: single_turn
     include_contents: none
-    instruction: |
-      You are a content recommender. Based on the article summary below, suggest 3 related topics the reader should explore next.
-
-      Article title: {{state.summarizer.title}}
-      Key points:
-      {{state.summarizer.bullets}}
-      Sentiment: {{state.summarizer.sentiment}}
-
-      List 3 related topics with a one-sentence explanation for each.
+    instruction_file: prompts.summarize_article__recommender
 
 workflow:
   nodes:
