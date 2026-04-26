@@ -26,6 +26,35 @@ uv run python -c "from google.adk import Agent, Workflow; from google.adk.models
 
 ## Quickstart
 
+### Scaffold a new agent (recommended for first-time use)
+
+```bash
+# Create a new agent project folder pre-wired to a local Ollama model:
+uv run modular-agent-designer create my_agent
+
+# Start Ollama and pull the default model (first time only):
+ollama serve &
+ollama pull mistral:7b
+
+# Run via CLI:
+uv run modular-agent-designer run my_agent/my_agent.yaml --input '{"message": "hello"}'
+
+# Or launch the interactive ADK web UI:
+adk web my_agent
+```
+
+The `create` command generates `my_agent/` containing:
+- `my_agent.yaml` — a minimal single-agent Ollama workflow you can edit
+- `agent.py` — entry point for `adk web` (exposes `root_agent`)
+- `__init__.py` — makes the folder a Python package (required by `adk web`)
+- `README.md` — per-agent quickstart
+
+```
+modular-agent-designer create <agent-name> [--dir <parent>] [--force]
+```
+
+### Run an existing example
+
 ```bash
 # Ollama must be running with at least one model pulled:
 ollama serve &
@@ -493,6 +522,20 @@ if __name__ == "__main__":
 
 ## CLI Reference
 
+### `create` — scaffold a new agent project
+
+```
+modular-agent-designer create <agent_name> [--dir <parent>] [--force]
+```
+
+- `agent_name` — name of the agent folder to create; must be a valid Python identifier
+- `--dir` — parent directory to create the folder in (defaults to CWD)
+- `--force` — overwrite existing files in the target folder
+
+Creates `<agent_name>/` containing a ready-to-run YAML workflow, a Python entry point, a `tools/` package, and a per-agent README.
+
+### `run` — execute a workflow
+
 ```
 modular-agent-designer run <yaml_path> --input '<json>'
 ```
@@ -502,6 +545,95 @@ modular-agent-designer run <yaml_path> --input '<json>'
 - `--mlflow` — Enable MLflow tracing via OTLP (takes experiment ID as argument)
 
 Output: final session state as pretty-printed JSON.
+
+---
+
+## AI Coding Assistant Skills
+
+The [`ai_skills/`](ai_skills/) directory contains five task-specific skills for Claude Code and Gemini CLI. Both tools use the same [ADK SKILL.md format](https://geminicli.com/docs/cli/skills/) and auto-discover skills from a `.claude/skills/` or `.gemini/skills/` directory in your project root.
+
+| Task | Skill |
+|---|---|
+| Full reference / first time using the library | `mad-overview` |
+| Building a new workflow from scratch | `mad-create-workflow` |
+| Adding tools (builtin, python, MCP stdio/SSE/HTTP) | `mad-tools` |
+| Conditional routing, branching, eval conditions | `mad-routing` |
+| Sub-agents, skills, output schemas, custom nodes | `mad-sub-agents` |
+
+### Claude Code
+
+**1. Copy skills into the Claude Code discovery directory:**
+
+```bash
+mkdir -p .claude/skills
+for skill in ai_skills/mad-*/; do cp -r "$skill" .claude/skills/; done
+```
+
+This creates `.claude/skills/mad-overview/`, `.claude/skills/mad-create-workflow/`, etc. Commit these to version control so every contributor gets them automatically.
+
+**2. Start a Claude Code session — skills are auto-loaded:**
+
+```bash
+claude
+```
+
+Claude Code reads each skill's `name` and `description` at session start and activates the relevant skill based on your request.
+
+**3. Invoke a skill manually:**
+
+```
+/mad-overview
+/mad-create-workflow
+/mad-tools
+/mad-routing
+/mad-sub-agents
+```
+
+---
+
+### Gemini CLI
+
+**1. Copy skills into the Gemini CLI discovery directory:**
+
+```bash
+mkdir -p .gemini/skills
+for skill in ai_skills/mad-*/; do cp -r "$skill" .gemini/skills/; done
+```
+
+Commit `.gemini/skills/` to version control to share skills across your team.
+
+**2. Start a Gemini CLI session — skills are auto-discovered:**
+
+```bash
+gemini
+```
+
+The model reads each skill's name and description at startup. When your prompt matches a skill, it calls `activate_skill` to pull in the full instructions automatically. Only the metadata is loaded upfront, saving context tokens.
+
+**3. Invoke a skill manually:**
+
+```
+/mad-overview
+/mad-routing
+```
+
+---
+
+### User-level install (available in all projects)
+
+To make the skills available globally — not just in this project — copy them to your home directory:
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills
+for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.claude/skills/; done
+
+# Gemini CLI
+mkdir -p ~/.gemini/skills
+for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.gemini/skills/; done
+```
+
+See [`ai_skills/README.md`](ai_skills/README.md) for the full skill reference.
 
 ---
 

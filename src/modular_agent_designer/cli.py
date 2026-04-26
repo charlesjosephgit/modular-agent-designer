@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from google.genai import types
 
 from .config.loader import load_workflow
 from .plugins.dedup import DeduplicateToolCallsPlugin, _STATE_PREFIX
+from .scaffolding.templates import render as _render_scaffold
 from .workflow.builder import build_workflow
 
 _APP_NAME = "modular_agent_designer"
@@ -88,6 +90,64 @@ def run(yaml_path: str, input_json: str, mlflow_experiment_id: str | None) -> No
 
     final_state = asyncio.run(_run_workflow(workflow, input_data, cfg.workflow.max_llm_calls))
     click.echo(json.dumps(final_state, indent=2, default=str))
+
+
+@main.command()
+@click.argument("agent_name")
+@click.option(
+    "--dir",
+    "parent_dir",
+    default=None,
+    metavar="DIR",
+    help="Parent directory to create the agent folder in (defaults to CWD).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing files in the target folder.",
+)
+def create(agent_name: str, parent_dir: str | None, force: bool) -> None:
+    """Scaffold a new agent project folder named AGENT_NAME."""
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", agent_name):
+        click.echo(
+            f"Error: '{agent_name}' is not a valid Python identifier. "
+            "Use letters, digits, and underscores; must not start with a digit.",
+            err=True,
+        )
+        sys.exit(1)
+
+    base = Path(parent_dir) if parent_dir else Path.cwd()
+    folder = base / agent_name
+
+    files = _render_scaffold(agent_name)
+
+    existing = [folder / name for name in files if (folder / name).exists()]
+    if existing and not force:
+        names = ", ".join(str(p.relative_to(base)) for p in existing)
+        click.echo(
+            f"Error: file(s) already exist: {names}\n"
+            "Use --force to overwrite.",
+            err=True,
+        )
+        sys.exit(1)
+
+    folder.mkdir(parents=True, exist_ok=True)
+    for filename, content in files.items():
+        target = folder / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+
+    click.echo(f"\nCreated agent '{agent_name}' in {folder}/\n")
+    click.echo("  Files:")
+    for filename in files:
+        click.echo(f"    {agent_name}/{filename}")
+    click.echo(
+        f"\nNext steps:\n"
+        f"  1. Start Ollama:  ollama serve && ollama pull mistral:7b\n"
+        f"  2. Run:           uv run modular-agent-designer run "
+        f"{agent_name}/{agent_name}.yaml --input '{{\"message\": \"hello\"}}'\n"
+    )
 
 
 async def _run_workflow(
