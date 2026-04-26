@@ -1,6 +1,6 @@
 [project]
 name = "modular-agent-designer"
-version = "0.3.0"
+version = "0.4.0"
 description = "A modular framework for designing and orchestrating complex agentic workflows with ease."
 requires-python = ">=3.13"
 dependencies = [

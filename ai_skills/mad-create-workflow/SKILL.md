@@ -28,7 +28,7 @@ This creates `<agent_name>/` with:
 Run the scaffold immediately to verify your setup:
 
 ```bash
-ollama serve && ollama pull mistral:7b
+ollama serve && ollama pull gemma:e4b
 uv run modular-agent-designer run <agent_name>/<agent_name>.yaml \
   --input '{"message": "hello"}'
 ```

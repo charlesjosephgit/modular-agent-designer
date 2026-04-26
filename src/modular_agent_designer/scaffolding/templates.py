@@ -17,7 +17,7 @@ description: Starter workflow scaffolded by `modular-agent-designer create`.
 models:
   local:
     provider: ollama
-    model: ollama_chat/mistral:7b
+    model: ollama_chat/gemma:e4b
 
 tools: {{}}
 
@@ -82,7 +82,7 @@ Scaffolded by `modular-agent-designer create`. Powered by a local Ollama model â
 
 ```bash
 ollama serve           # start the Ollama daemon
-ollama pull mistral:7b # pull the default model (first time only)
+ollama pull gemma:e4b # pull the default model (first time only)
 ```
 
 ## Run

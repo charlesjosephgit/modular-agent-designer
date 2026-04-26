@@ -44,7 +44,7 @@ def test_create_yaml_content():
         runner.invoke(main, ["create", "my_bot"], catch_exceptions=False)
         yaml_text = Path("my_bot/my_bot.yaml").read_text()
         assert "name: my_bot" in yaml_text
-        assert "ollama_chat/mistral:7b" in yaml_text
+        assert "ollama_chat/gemma:e4b" in yaml_text
         assert "responder" in yaml_text
 
 

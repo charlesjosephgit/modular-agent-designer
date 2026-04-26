@@ -144,7 +144,7 @@ def create(agent_name: str, parent_dir: str | None, force: bool) -> None:
         click.echo(f"    {agent_name}/{filename}")
     click.echo(
         f"\nNext steps:\n"
-        f"  1. Start Ollama:  ollama serve && ollama pull mistral:7b\n"
+        f"  1. Start Ollama:  ollama serve && ollama pull gemma:e4b\n"
         f"  2. Run:           uv run modular-agent-designer run "
         f"{agent_name}/{agent_name}.yaml --input '{{\"message\": \"hello\"}}'\n"
     )

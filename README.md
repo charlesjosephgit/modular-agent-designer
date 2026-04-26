@@ -34,7 +34,7 @@ uv run modular-agent-designer create my_agent
 
 # Start Ollama and pull the default model (first time only):
 ollama serve &
-ollama pull mistral:7b
+ollama pull gemma:e4b
 
 # Run via CLI:
 uv run modular-agent-designer run my_agent/my_agent.yaml --input '{"message": "hello"}'
@@ -58,7 +58,7 @@ modular-agent-designer create <agent-name> [--dir <parent>] [--force]
 ```bash
 # Ollama must be running with at least one model pulled:
 ollama serve &
-ollama pull mistral:7b
+ollama pull gemma:e4b
 
 uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"tide pools"}'
 ```
