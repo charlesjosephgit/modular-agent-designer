@@ -1,0 +1,60 @@
+name: output_schema_routing
+description: >
+  Demonstrates routing based on a structured Pydantic output_schema.
+  The validator agent returns a ValidationResult with validation_result == "success" or "fail".
+  The router then branches: success → process_node, anything else → reject_node (default).
+
+models:
+  fast:
+    provider: ollama
+    model: "ollama_chat/gemma4:e4b"
+
+agents:
+  validator:
+    model: fast
+    output_schema: "schemas.validation.ValidationResult"
+    instruction: |
+      You are a strict input validator.
+      Evaluate the following input and decide if it is valid:
+
+        {{state.user_input}}
+
+      Rules:
+        - Must be non-empty
+        - Must be a complete sentence (ends with punctuation)
+        - Must be in English
+
+      Return a JSON object with:
+        - validation_result: "success" if all rules pass, "fail" otherwise
+        - reason: one sentence explaining your decision
+
+  process_node:
+    model: fast
+    instruction: |
+      The input passed validation. Process it helpfully:
+        {{state.user_input}}
+
+  reject_node:
+    model: fast
+    instruction: |
+      The input failed validation for this reason: {{state.validator.reason}}
+      Politely explain the problem and ask the user to try again.
+
+workflow:
+  entry: validator
+  nodes:
+    - validator
+    - process_node
+    - reject_node
+  edges:
+    # Route to process_node when validation_result == "success".
+    # state['validator'] is the dict ADK writes from the output_schema.
+    - from: validator
+      to: process_node
+      condition:
+        eval: "state.get('validator', {}).get('validation_result') == 'success'"
+
+    # Default fallback — catches "fail" and any unexpected values.
+    - from: validator
+      to: reject_node
+      condition: default
