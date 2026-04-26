@@ -27,7 +27,7 @@ def test_create_generates_expected_files():
         assert (folder / "README.md").exists()
         assert (folder / "tools" / "__init__.py").exists()
         assert (folder / "prompts" / "__init__.py").exists()
-        assert (folder / "prompts" / "demo_agent__responder.txt").exists()
+        assert (folder / "prompts" / "demo_agent__responder.md").exists()
         assert (folder / "schemas" / "__init__.py").exists()
 
 

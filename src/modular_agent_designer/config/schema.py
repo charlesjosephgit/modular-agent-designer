@@ -169,7 +169,7 @@ class AgentConfig(BaseModel):
         description=(
             "Dotted ref to a prompt file resolved from cwd, e.g. "
             "'prompts.my_workflow__my_agent' → "
-            "<cwd>/prompts/my_workflow__my_agent.txt"
+            "<cwd>/prompts/my_workflow__my_agent.md"
         ),
     )
     tools: list[str] = []

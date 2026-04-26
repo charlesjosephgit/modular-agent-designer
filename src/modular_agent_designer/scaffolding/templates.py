@@ -41,11 +41,11 @@ _INIT_PY = """\
 _PROMPTS_INIT_PY = """\
 # prompts/__init__.py
 #
-# Store agent prompt files in this directory as plain .txt files.
+# Store agent prompt files in this directory as .md files.
 # Each file corresponds to one agent's instruction.
 #
-# Naming convention: <workflow>__<agent>.txt
-# Example: {name}__responder.txt
+# Naming convention: <workflow>__<agent>.md
+# Example: {name}__responder.md
 #
 # Reference a prompt file in {name}.yaml using a dotted ref:
 #
@@ -53,7 +53,7 @@ _PROMPTS_INIT_PY = """\
 #     responder:
 #       instruction_file: {name}.prompts.{name}__responder
 #
-# Dots are folder separators; .txt is appended automatically.
+# Dots are folder separators; .md is appended automatically.
 # The path is resolved from the project root (cwd where the CLI runs).
 #
 # {{{{state.x}}}} and {{{{state.x.y.z}}}} template syntax works inside prompt
@@ -158,6 +158,6 @@ def render(name: str) -> dict[str, str]:
         "README.md": _README.format(name=name),
         "tools/__init__.py": _TOOLS_INIT_PY.format(name=name),
         "prompts/__init__.py": _PROMPTS_INIT_PY.format(name=name),
-        f"prompts/{name}__responder.txt": _PROMPTS_SAMPLE_TXT,
+        f"prompts/{name}__responder.md": _PROMPTS_SAMPLE_TXT,
         "schemas/__init__.py": _SCHEMAS_INIT_PY.format(name=name),
     }

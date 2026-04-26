@@ -15,7 +15,7 @@ _DOTTED_REF_RE = re.compile(
 
 
 def _dotted_ref_to_path(ref: str) -> Path:
-    """Convert a dotted ref like 'prompts.my_agent' to a Path with .txt suffix.
+    """Convert a dotted ref like 'prompts.my_agent' to a Path with .md suffix.
 
     Resolved from the current working directory.
     """
@@ -24,7 +24,7 @@ def _dotted_ref_to_path(ref: str) -> Path:
             f"instruction_file '{ref}' is not a valid dotted ref "
             f"(e.g. 'prompts.my_workflow__my_agent')"
         )
-    return Path.cwd().joinpath(*ref.split(".")).with_suffix(".txt")
+    return Path.cwd().joinpath(*ref.split(".")).with_suffix(".md")
 
 
 def _resolve_instruction_files(raw: dict) -> None:

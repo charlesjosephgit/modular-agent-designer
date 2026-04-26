@@ -24,7 +24,7 @@ This creates `<agent_name>/` with:
     __init__.py              # add custom tool functions here (see comments)
   prompts/
     __init__.py              # explains the prompts/ convention
-    <agent_name>__responder.txt  # starter prompt for the responder agent
+    <agent_name>__responder.md   # starter prompt for the responder agent
   schemas/
     __init__.py              # add Pydantic output schema classes here (see comments)
   README.md                  # per-agent quickstart
@@ -136,9 +136,9 @@ agents:
     tools: [fetch]
 ```
 
-- `instruction_file` takes a dotted ref: dots → path separators, `.txt` appended automatically.
-- Resolved from the project root (cwd), so `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.txt`.
-- The scaffolder creates `prompts/` with an `__init__.py` and a sample `.txt` to start from.
+- `instruction_file` takes a dotted ref: dots → path separators, `.md` appended automatically.
+- Resolved from the project root (cwd), so `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`.
+- The scaffolder creates `prompts/` with an `__init__.py` and a sample `.md` to start from.
 - `instruction` and `instruction_file` are mutually exclusive.
 
 **Template syntax (both forms):**
@@ -304,6 +304,6 @@ uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": 
 | Mixing unconditional + conditional edges from same source | Pydantic error at load time | Use only one type per source node |
 | `condition: default` with no other edges from that source | Works but unnecessary | Remove it for a clean unconditional edge |
 | Sub-agent listed in `workflow.nodes` | Pydantic error: sub-agents must not be workflow nodes | Remove it from `nodes:` |
-| `instruction_file: ../prompts/file.txt` (old path style) | `ValueError: not a valid dotted ref` at load time | Use dotted syntax: `instruction_file: prompts.my_workflow__agent` |
+| `instruction_file: ../prompts/file.md` (old path style) | `ValueError: not a valid dotted ref` at load time | Use dotted syntax: `instruction_file: prompts.my_workflow__agent` |
 | `instruction_file` path not found | `ValueError: instruction_file not found: <path>` | Run CLI from project root; file must be at `<cwd>/prompts/…` |
 | Both `instruction:` and `instruction_file:` set | `ValueError: not both` at load time | Remove one; they are mutually exclusive |

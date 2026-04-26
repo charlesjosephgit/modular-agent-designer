@@ -147,7 +147,7 @@ def test_instruction_file_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.chdir(tmp_path)
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
-    (prompts_dir / "my_prompt.txt").write_text("Hello {{state.user_input.name}}.")
+    (prompts_dir / "my_prompt.md").write_text("Hello {{state.user_input.name}}.")
     yaml_text = _BASE_YAML.format(
         instruction_field="instruction_file: prompts.my_prompt"
     )
@@ -187,7 +187,7 @@ def test_both_instruction_and_file_raises(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.chdir(tmp_path)
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
-    (prompts_dir / "p.txt").write_text("hi")
+    (prompts_dir / "p.md").write_text("hi")
     yaml_text = textwrap.dedent("""\
         name: test_wf
         models:

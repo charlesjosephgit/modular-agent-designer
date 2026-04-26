@@ -143,7 +143,7 @@ thinking:
 |---|---|---|---|
 | `model` | string | Yes | Must reference a key in `models:` |
 | `instruction` | string | One of | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time |
-| `instruction_file` | string | One of | Dotted ref to a `.txt` file resolved from cwd, e.g. `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.txt`; `{{state.x.y}}` templates work inside the file |
+| `instruction_file` | string | One of | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`; `{{state.x.y}}` templates work inside the file |
 | `tools` | list[string] | No | References to keys in `tools:` |
 | `skills` | list[string] | No | References to keys in `skills:` |
 | `output_schema` | string | No | Dotted path to a Pydantic v2 class |
