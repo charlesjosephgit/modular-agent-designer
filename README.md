@@ -567,6 +567,52 @@ modular-agent-designer run <yaml_path> --input '<json>'
 
 Output: final session state as pretty-printed JSON.
 
+### `diagram` — visualize a workflow as a Mermaid flowchart
+
+```
+modular-agent-designer diagram <yaml_path> [--output PATH]
+```
+
+- `yaml_path` — path to the workflow YAML file
+- `--output PATH` — write the diagram to a file instead of stdout
+
+Loads the workflow config (no LLM calls, no API keys required) and emits a [Mermaid](https://mermaid.js.org/) `flowchart TD` to stdout. Paste the output into [mermaid.live](https://mermaid.live) or any Markdown renderer (GitHub, Notion, Obsidian) to get an instant visual of your node/edge graph.
+
+```bash
+# Print to terminal — pipe into a .mmd file or paste into mermaid.live
+uv run modular-agent-designer diagram workflows/conditional_workflow.yaml
+
+# Write directly to a file
+uv run modular-agent-designer diagram workflows/complex_conditions.yaml --output diagram.mmd
+```
+
+Example output for `conditional_workflow.yaml`:
+
+```
+flowchart TD
+    START((start))
+    classifier["classifier<br/>(local_fast)"]
+    tech_expert["tech_expert<br/>(local_fast) · chat"]
+    creative_expert["creative_expert<br/>(local_fast)"]
+    START --> classifier
+    classifier -. "technical" .-> tech_expert
+    classifier -. "creative" .-> creative_expert
+```
+
+**What gets rendered:**
+
+| Element | Mermaid representation |
+|---|---|
+| Workflow entry | Virtual `START` node with solid arrow to the entry node |
+| LLM agent | Rectangle with `name (model_alias)` label; appends `· chat` for chat mode |
+| Custom `BaseNode` | Hexagon with `name (ref)` label |
+| Unconditional edge | Solid arrow `-->` |
+| String / integer condition | Dashed arrow with the value as label |
+| List condition (OR logic) | Dashed arrow with values joined by `\|` |
+| `eval` condition | Dashed arrow with `eval: <expression>` label (truncated to 40 chars) |
+| `default` fallback | Dashed arrow with `default` label |
+| Sub-agents | Subgraph cluster under the parent node, with dotted edges |
+
 ---
 
 ## AI Coding Assistant Skills

@@ -1,0 +1,10 @@
+flowchart TD
+    START((start))
+    coordinator["coordinator<br/>(local_fast)"]
+    subgraph coordinator_sub_agents [sub-agents of coordinator]
+        search_specialist["search_specialist<br/>(local_fast) · single_turn"]
+        analysis_specialist["analysis_specialist<br/>(local_fast) · single_turn"]
+    end
+    coordinator -.-> search_specialist
+    coordinator -.-> analysis_specialist
+    START --> coordinator

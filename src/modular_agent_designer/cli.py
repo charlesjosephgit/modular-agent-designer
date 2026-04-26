@@ -150,6 +150,34 @@ def create(agent_name: str, parent_dir: str | None, force: bool) -> None:
     )
 
 
+@main.command()
+@click.argument("yaml_path")
+@click.option(
+    "--output",
+    "output_path",
+    default=None,
+    metavar="PATH",
+    help="Write diagram to PATH instead of stdout.",
+)
+def diagram(yaml_path: str, output_path: str | None) -> None:
+    """Emit a Mermaid flowchart for the workflow defined in YAML_PATH."""
+    try:
+        cfg = load_workflow(yaml_path)
+    except (FileNotFoundError, ValueError) as exc:
+        click.echo(f"Error loading workflow: {exc}", err=True)
+        sys.exit(1)
+
+    from .visualize.mermaid import render_mermaid
+
+    text = render_mermaid(cfg)
+
+    if output_path:
+        Path(output_path).write_text(text)
+        click.echo(f"Diagram written to {output_path}")
+    else:
+        click.echo(text, nl=False)
+
+
 async def _run_workflow(
     workflow, input_data: dict[str, Any], max_llm_calls: int = 20
 ) -> dict[str, Any]:

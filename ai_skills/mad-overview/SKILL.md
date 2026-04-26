@@ -197,9 +197,15 @@ uv run modular-agent-designer run <yaml_path> --input '<json>' --mlflow <experim
 
 # Example
 uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": "AI agents"}'
+
+# Visualize a workflow as a Mermaid flowchart (no API keys required)
+uv run modular-agent-designer diagram <yaml_path>
+uv run modular-agent-designer diagram <yaml_path> --output diagram.mmd
 ```
 
-Output: final session state as pretty-printed JSON.
+`run` output: final session state as pretty-printed JSON.
+
+`diagram` output: Mermaid `flowchart TD` text. Paste it into [mermaid.live](https://mermaid.live) or any GitHub/Markdown renderer for an instant visual of the workflow graph. No LLM calls or API keys are needed — it reads only the YAML config. Nodes are rectangles (LLM agents) or hexagons (custom BaseNode). Edges are solid (unconditional) or dashed with a label (string/list/eval/default conditions). Sub-agents appear as a named subgraph cluster.
 
 ---
 
