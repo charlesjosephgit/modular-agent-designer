@@ -30,7 +30,9 @@ tools:
 
 | Name | Description |
 |---|---|
-| `fetch_url` | Async HTTP GET; follows redirects; 30 s timeout; returns response body as text |
+| `fetch_url` | Async HTTP GET; follows redirects; 30 s timeout; returns body as text. On HTTP error returns `ERROR: …` (never raises). |
+| `http_get_json` | Async HTTP GET; parses response as JSON; returns a `dict`. On error returns `{"error": "…"}`. |
+| `read_text_file` | Read a UTF-8 text file at a path relative to CWD. Rejects absolute paths and `..` traversal. Returns contents or `ERROR: …` string. |
 
 Use `name:` OR `ref:`, never both — Pydantic rejects it.
 

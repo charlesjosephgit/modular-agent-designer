@@ -191,21 +191,32 @@ uv sync --prerelease=allow
 
 # Run a workflow
 uv run modular-agent-designer run <yaml_path> --input '<json>'
+uv run modular-agent-designer run <yaml_path> --input-file input.json   # read input from file
+uv run modular-agent-designer run <yaml_path> --input-file -            # read from stdin
+uv run modular-agent-designer run <yaml_path> --input '<json>' --log-level DEBUG
 
 # With MLflow tracing
 uv run modular-agent-designer run <yaml_path> --input '<json>' --mlflow <experiment_id>
 
-# Example
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": "AI agents"}'
+# Validate without running (no API keys required with --skip-build)
+uv run modular-agent-designer validate <yaml_path>
+uv run modular-agent-designer validate <yaml_path> --skip-build   # schema-only, CI-safe
+
+# Inspect a workflow's structure (no API keys required)
+uv run modular-agent-designer list <yaml_path>
 
 # Visualize a workflow as a Mermaid flowchart (no API keys required)
 uv run modular-agent-designer diagram <yaml_path>
 uv run modular-agent-designer diagram <yaml_path> --output diagram.mmd
 ```
 
-`run` output: final session state as pretty-printed JSON.
+**`run`** — executes the workflow and prints the final session state as pretty-printed JSON. `--input` and `--input-file` are mutually exclusive; exactly one is required. `--log-level` accepts `DEBUG`, `INFO`, `WARNING`, `ERROR`.
 
-`diagram` output: Mermaid `flowchart TD` text. Paste it into [mermaid.live](https://mermaid.live) or any GitHub/Markdown renderer for an instant visual of the workflow graph. No LLM calls or API keys are needed — it reads only the YAML config. Nodes are rectangles (LLM agents) or hexagons (custom BaseNode). Edges are solid (unconditional) or dashed with a label (string/list/eval/default conditions). Sub-agents appear as a named subgraph cluster.
+**`validate`** — validates schema and (by default) also builds the workflow to check API keys and tool refs. `--skip-build` skips the build step so CI can run without secrets. Exits `0` on success, `1` on error.
+
+**`list`** — prints a human-readable summary of models, tools, skills, agents (including which are workflow nodes vs. sub-agents), and edges with their conditions.
+
+**`diagram`** — emits a Mermaid `flowchart TD`. Paste into [mermaid.live](https://mermaid.live) or any GitHub/Markdown renderer. Nodes are rectangles (LLM agents) or hexagons (custom BaseNode). Edges are solid (unconditional) or dashed with a label (string/list/eval/default). Sub-agents appear as a named subgraph cluster.
 
 ---
 

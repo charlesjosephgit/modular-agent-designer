@@ -113,12 +113,25 @@ def _build_router_node(src_name: str, conditional_edges: list) -> Any:
         # Evaluate non-default conditions in declaration order.
         for idx, condition in non_default:
             if _matches(condition, output, state_dict, raw_output):
+                logger.info(
+                    "router '%s': matched condition %r → route _route_%d",
+                    src_name, condition, idx,
+                )
                 yield AdkEvent(route=f"_route_{idx}", output=raw_output)
                 return
 
         # Fall back to default if nothing matched.
         if default_idx is not None:
+            logger.info(
+                "router '%s': no condition matched → default route _route_%d",
+                src_name, default_idx,
+            )
             yield AdkEvent(route=f"_route_{default_idx}", output=raw_output)
+        else:
+            logger.info(
+                "router '%s': no condition matched and no default — workflow terminates",
+                src_name,
+            )
 
     _router.__name__ = f"{src_name}_router"
     _router.__qualname__ = f"{src_name}_router"

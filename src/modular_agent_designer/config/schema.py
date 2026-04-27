@@ -199,6 +199,7 @@ class AgentConfig(BaseModel):
 class NodeRefConfig(BaseModel):
     type: Literal["node"]
     ref: str
+    config: dict[str, Any] = {}
 
 
 NodeEntry = Annotated[

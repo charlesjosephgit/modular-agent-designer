@@ -200,6 +200,9 @@ agents:
   my_router:
     type: node
     ref: mypackage.nodes.RouterNode   # BaseNode subclass or @node function
+    config:                           # optional; forwarded as kwargs to the constructor
+      threshold: 0.8
+      label: primary
 ```
 
 ```python
@@ -208,6 +211,11 @@ from google.adk.workflow import BaseNode
 from google.adk import Context, Event
 
 class RouterNode(BaseNode):
+    def __init__(self, name: str, threshold: float = 0.5, label: str = "default"):
+        super().__init__(name=name)
+        self.threshold = threshold
+        self.label = label
+
     async def run(self, ctx: Context, node_input):
         data = ctx.state.to_dict()
         if "keyword" in str(node_input):
@@ -217,6 +225,7 @@ class RouterNode(BaseNode):
 ```
 
 - Must be a `BaseNode` subclass or `@node`-decorated async generator.
+- The `config:` mapping is passed as keyword arguments to `BaseNode.__init__` (alongside `name`). Lets you parameterise one class for multiple YAML use-cases without writing extra subclasses. `@node` functions ignore `config:`.
 - Manages its own state writes via `ctx.state`.
 - No `output_key` is provided automatically — write to state explicitly if downstream agents need it.
 - Good for: deterministic routers, external API side effects, pure computation without an LLM.

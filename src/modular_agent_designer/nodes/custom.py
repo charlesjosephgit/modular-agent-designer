@@ -6,6 +6,18 @@ isn't a plain LLM call (branching, loops, side-effects, etc.).
 Custom nodes are responsible for their own state writes.  The framework
 does NOT wrap their return value into ctx.state automatically — this
 gives full control to the implementor.
+
+An optional `config:` mapping in the YAML is forwarded as keyword arguments
+to the class constructor when the ref points to a BaseNode subclass, allowing
+parameterised nodes without needing a new subclass per use-case:
+
+    agents:
+      router:
+        type: node
+        ref: mypackage.nodes.RouterNode
+        config:
+          threshold: 0.8
+          label: primary
 """
 from __future__ import annotations
 
@@ -21,14 +33,12 @@ def build_custom_node(node_name: str, cfg: NodeRefConfig) -> Any:
     """Import and return the node object described by *cfg*.
 
     The ref may point to:
-    - A BaseNode subclass  → instantiated with no args and returned.
-    - A plain callable or @node-decorated function → returned as-is.
+    - A BaseNode subclass  → instantiated with cfg.config as kwargs and returned.
+    - A plain callable or @node-decorated function → returned as-is (config ignored).
     """
     obj = import_dotted_ref(cfg.ref, context=f"Custom node '{node_name}'")
 
-    # If it's a class (BaseNode subclass), instantiate it.
     if isinstance(obj, type) and issubclass(obj, BaseNode):
-        return obj()
+        return obj(name=node_name, **cfg.config)
 
-    # Otherwise return as-is (function, @node-decorated, or instance).
     return obj

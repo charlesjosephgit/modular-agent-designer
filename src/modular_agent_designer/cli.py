@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -24,6 +25,8 @@ _APP_NAME = "modular_agent_designer"
 _USER_ID = "cli-user"
 _SESSION_ID = "cli-session"
 
+_LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
+
 
 @click.group()
 def main() -> None:
@@ -35,10 +38,20 @@ def main() -> None:
 @click.option(
     "--input",
     "input_json",
-    required=True,
+    default=None,
     help=(
         "JSON object passed as the workflow input "
         "(available as state.user_input)."
+    ),
+)
+@click.option(
+    "--input-file",
+    "input_file",
+    default=None,
+    metavar="PATH",
+    help=(
+        "Path to a JSON file to use as workflow input. "
+        "Use '-' to read from stdin."
     ),
 )
 @click.option(
@@ -49,8 +62,48 @@ def main() -> None:
     help="Enable MLflow tracing via OTLP and send spans to the configured OTLP endpoint. "
     "EXPERIMENT_ID is set as the x-mlflow-experiment-id header (default: 0).",
 )
-def run(yaml_path: str, input_json: str, mlflow_experiment_id: str | None) -> None:
-    """Run a workflow defined in YAML_PATH with --input JSON."""
+@click.option(
+    "--log-level",
+    "log_level",
+    default=None,
+    type=click.Choice(_LOG_LEVELS, case_sensitive=False),
+    help="Set logging level (DEBUG, INFO, WARNING, ERROR).",
+)
+def run(
+    yaml_path: str,
+    input_json: str | None,
+    input_file: str | None,
+    mlflow_experiment_id: str | None,
+    log_level: str | None,
+) -> None:
+    """Run a workflow defined in YAML_PATH with --input JSON or --input-file PATH."""
+    if log_level is not None:
+        logging.basicConfig(
+            level=getattr(logging, log_level.upper()),
+            format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        )
+
+    # Exactly one of --input or --input-file must be provided.
+    if input_json is not None and input_file is not None:
+        click.echo("Error: --input and --input-file are mutually exclusive.", err=True)
+        sys.exit(1)
+    if input_json is None and input_file is None:
+        click.echo("Error: one of --input or --input-file is required.", err=True)
+        sys.exit(1)
+
+    raw_input: str
+    if input_file is not None:
+        if input_file == "-":
+            raw_input = sys.stdin.read()
+        else:
+            p = Path(input_file)
+            if not p.exists():
+                click.echo(f"Error: --input-file not found: {p}", err=True)
+                sys.exit(1)
+            raw_input = p.read_text(encoding="utf-8")
+    else:
+        raw_input = input_json  # type: ignore[assignment]
+
     # Inject the CWD and the YAML file's directory into sys.path so that local
     # tool packages (e.g. a tools/ folder next to the workflow) are importable
     # without requiring a pip install.
@@ -64,13 +117,13 @@ def run(yaml_path: str, input_json: str, mlflow_experiment_id: str | None) -> No
         setup_tracing(mlflow_experiment_id)
 
     try:
-        _parsed = json.loads(input_json)
+        _parsed = json.loads(raw_input)
     except json.JSONDecodeError as exc:
-        click.echo(f"Error: --input is not valid JSON: {exc}", err=True)
+        click.echo(f"Error: input is not valid JSON: {exc}", err=True)
         sys.exit(1)
     if not isinstance(_parsed, dict):
         click.echo(
-            f"Error: --input must be a JSON object, got {type(_parsed).__name__}",
+            f"Error: input must be a JSON object, got {type(_parsed).__name__}",
             err=True,
         )
         sys.exit(1)
@@ -90,6 +143,134 @@ def run(yaml_path: str, input_json: str, mlflow_experiment_id: str | None) -> No
 
     final_state = asyncio.run(_run_workflow(workflow, input_data, cfg.workflow.max_llm_calls))
     click.echo(json.dumps(final_state, indent=2, default=str))
+
+
+@main.command()
+@click.argument("yaml_path")
+@click.option(
+    "--skip-build",
+    is_flag=True,
+    default=False,
+    help=(
+        "Only validate the YAML schema; skip building the workflow "
+        "(avoids API-key checks, useful in CI without secrets)."
+    ),
+)
+def validate(yaml_path: str, skip_build: bool) -> None:
+    """Validate the workflow YAML at YAML_PATH without running it.
+
+    Exits 0 on success, 1 on any error.
+    """
+    for extra in (os.getcwd(), str(Path(yaml_path).resolve().parent)):
+        if extra not in sys.path:
+            sys.path.insert(0, extra)
+
+    try:
+        cfg = load_workflow(yaml_path)
+    except (FileNotFoundError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    if not skip_build:
+        try:
+            build_workflow(cfg)
+        except (ValueError, ImportError, AttributeError, EnvironmentError) as exc:
+            click.echo(f"Error building workflow: {exc}", err=True)
+            sys.exit(1)
+
+    n_agents = len(cfg.agents)
+    n_tools = len(cfg.tools)
+    n_models = len(cfg.models)
+    phase = "schema" if skip_build else "build"
+    click.echo(
+        f"OK ({phase}): '{cfg.name}' — "
+        f"{n_agents} agent(s), {n_tools} tool(s), {n_models} model(s)"
+    )
+
+
+@main.command(name="list")
+@click.argument("yaml_path")
+def list_workflow(yaml_path: str) -> None:
+    """List models, tools, agents, and workflow graph defined in YAML_PATH."""
+    try:
+        cfg = load_workflow(yaml_path)
+    except (FileNotFoundError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    from .config.schema import AgentConfig, NodeRefConfig
+
+    click.echo(f"\nWorkflow: {cfg.name}")
+    if cfg.description:
+        click.echo(f"  {cfg.description}")
+
+    click.echo(f"\nModels ({len(cfg.models)}):")
+    for alias, m in cfg.models.items():
+        extras = []
+        if m.temperature is not None:
+            extras.append(f"temp={m.temperature}")
+        if m.max_tokens is not None:
+            extras.append(f"max_tokens={m.max_tokens}")
+        if m.thinking:
+            extras.append("thinking")
+        suffix = f"  [{', '.join(extras)}]" if extras else ""
+        click.echo(f"  {alias}: {m.model}{suffix}")
+
+    click.echo(f"\nTools ({len(cfg.tools)}):")
+    for alias, t in cfg.tools.items():
+        click.echo(f"  {alias}: type={t.type}")
+
+    if cfg.skills:
+        click.echo(f"\nSkills ({len(cfg.skills)}):")
+        for alias, s in cfg.skills.items():
+            click.echo(f"  {alias}: {s.ref}")
+
+    click.echo(f"\nAgents ({len(cfg.agents)}):")
+    wf_nodes = set(cfg.workflow.nodes)
+    all_sub: set[str] = set()
+    for a in cfg.agents.values():
+        if isinstance(a, AgentConfig):
+            all_sub.update(a.sub_agents)
+
+    for agent_name, a in cfg.agents.items():
+        tags: list[str] = []
+        if agent_name in wf_nodes:
+            tags.append("node")
+        if agent_name in all_sub:
+            tags.append("sub-agent")
+        tag_str = f" [{', '.join(tags)}]" if tags else ""
+
+        if isinstance(a, AgentConfig):
+            tool_str = f"  tools={a.tools}" if a.tools else ""
+            sub_str = f"  sub_agents={a.sub_agents}" if a.sub_agents else ""
+            mode_str = f"  mode={a.mode}" if a.mode else ""
+            click.echo(f"  {agent_name}{tag_str}: model={a.model}{mode_str}{tool_str}{sub_str}")
+        elif isinstance(a, NodeRefConfig):
+            click.echo(f"  {agent_name}{tag_str}: custom node ref={a.ref}")
+
+    wf = cfg.workflow
+    click.echo("\nWorkflow graph:")
+    click.echo(f"  entry: {wf.entry}")
+    click.echo(f"  nodes: {', '.join(wf.nodes)}")
+    click.echo(f"  max_llm_calls: {wf.max_llm_calls}")
+    if wf.edges:
+        click.echo(f"  edges ({len(wf.edges)}):")
+        for edge in wf.edges:
+            cond = ""
+            if edge.condition is not None:
+                c = edge.condition
+                if c == "__DEFAULT__":
+                    cond = " [default]"
+                elif hasattr(c, "eval"):
+                    cond = f" [eval: {c.eval}]"
+                elif isinstance(c, list):
+                    cond = f" [if: {' | '.join(str(v) for v in c)}]"
+                else:
+                    cond = f" [if: {c}]"
+            click.echo(f"    {edge.from_} -> {edge.to}{cond}")
+    else:
+        click.echo("  edges: (none)")
+    click.echo("")
 
 
 @main.command()

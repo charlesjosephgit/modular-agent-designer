@@ -353,13 +353,23 @@ The following tools ship with the framework and can be referenced by short name 
 
 | Name | Description |
 |---|---|
-| `fetch_url` | Fetch a URL and return the response body as text (async, follows redirects, 30 s timeout). |
+| `fetch_url` | Async HTTP GET — returns response body as text. On HTTP error returns `ERROR: …` string (never raises). |
+| `http_get_json` | Async HTTP GET — parses response as JSON and returns a `dict`. On error returns `{"error": "…"}`. |
+| `read_text_file` | Read a UTF-8 text file at a path relative to CWD. Rejects absolute paths and `..` traversal. Returns file contents or an `ERROR: …` string. |
 
 ```yaml
 tools:
   fetch:
     type: builtin
     name: fetch_url   # resolves to modular_agent_designer.tools.fetch_url
+
+  fetch_json:
+    type: builtin
+    name: http_get_json
+
+  read_file:
+    type: builtin
+    name: read_text_file
 
 agents:
   researcher:
@@ -480,6 +490,9 @@ agents:
   my_router:
     type: node
     ref: my_package.nodes.RouterNode   # BaseNode subclass or @node-decorated function
+    config:                            # optional; forwarded as kwargs to the constructor
+      threshold: 0.8
+      label: primary
 ```
 
 ```python
@@ -488,6 +501,11 @@ from google.adk.workflow import BaseNode, node
 from google.adk import Context, Event
 
 class RouterNode(BaseNode):
+    def __init__(self, name: str, threshold: float = 0.5, label: str = "default"):
+        super().__init__(name=name)
+        self.threshold = threshold
+        self.label = label
+
     async def run(self, ctx: Context, node_input):
         # Read/write ctx.state, call ctx.run_node(), yield Events
         if "keyword" in node_input:
@@ -495,6 +513,8 @@ class RouterNode(BaseNode):
         else:
             yield Event(route="path_b")
 ```
+
+The `config:` mapping is passed as keyword arguments to the `BaseNode` subclass constructor (alongside `name`). This lets you parameterise a node in YAML without writing a new subclass per configuration. `@node`-decorated plain functions ignore `config:`.
 
 Custom nodes handle their own state writes.
 
@@ -558,14 +578,57 @@ Creates `<agent_name>/` containing a ready-to-run YAML workflow, a Python entry 
 ### `run` — execute a workflow
 
 ```
-modular-agent-designer run <yaml_path> --input '<json>'
+modular-agent-designer run <yaml_path> (--input '<json>' | --input-file <path>) [options]
 ```
 
 - `yaml_path` — path to the workflow YAML file
-- `--input` — JSON object available as `state.user_input` in templates
-- `--mlflow` — Enable MLflow tracing via OTLP (takes experiment ID as argument)
+- `--input '<json>'` — JSON object available as `state.user_input` in templates (mutually exclusive with `--input-file`)
+- `--input-file PATH` — read input JSON from a file; use `-` to read from stdin
+- `--mlflow EXPERIMENT_ID` — Enable MLflow tracing via OTLP
+- `--log-level LEVEL` — set logging verbosity: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
 
-Output: final session state as pretty-printed JSON.
+Exactly one of `--input` or `--input-file` is required. Output: final session state as pretty-printed JSON.
+
+```bash
+# Inline JSON
+uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"AI"}'
+
+# From a file
+uv run modular-agent-designer run workflows/hello_world.yaml --input-file input.json
+
+# From stdin
+echo '{"topic":"AI"}' | uv run modular-agent-designer run workflows/hello_world.yaml --input-file -
+
+# With debug logging
+uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"AI"}' --log-level DEBUG
+```
+
+### `validate` — check a workflow without running it
+
+```
+modular-agent-designer validate <yaml_path> [--skip-build]
+```
+
+- `yaml_path` — path to the workflow YAML file
+- `--skip-build` — only validate the YAML schema; skip the build step (avoids API-key checks — useful in CI without secrets)
+
+Exits `0` on success, `1` on any error. Useful for CI pipelines and pre-commit hooks.
+
+```bash
+# Full validation (schema + build — requires API keys)
+uv run modular-agent-designer validate workflows/research_assistant.yaml
+
+# Schema-only (no API keys required)
+uv run modular-agent-designer validate workflows/research_assistant.yaml --skip-build
+```
+
+### `list` — inspect a workflow's structure
+
+```
+modular-agent-designer list <yaml_path>
+```
+
+Loads the YAML and prints a human-readable summary of models, tools, skills, agents, and the workflow graph (entry point, nodes, edges with conditions). No LLM calls or API keys required.
 
 ### `diagram` — visualize a workflow as a Mermaid flowchart
 

@@ -3,12 +3,14 @@
 Each wrapper is a @node(rerun_on_resume=True) async generator that:
   1. Converts ctx.state (ADK State object) to a plain dict.
   2. Resolves {{state.x.y}} templates in the instruction.
-  3. Constructs a fresh Agent with the resolved instruction.
+  3. Constructs a fresh Agent with the resolved instruction (cached by LRU).
   4. Calls ctx.run_node(agent, ...) — requires rerun_on_resume=True on caller.
   5. Yields the result; Agent's output_key writes it to ctx.state[agent_name].
 """
 from __future__ import annotations
 
+import logging
+from collections import OrderedDict
 from typing import Any, AsyncGenerator
 
 from google.adk import Agent, Context
@@ -19,6 +21,35 @@ from ..config.schema import AgentConfig
 from ..plugins.thinking import make_capture_thinking_callback
 from ..state.template import resolve
 from ..utils.imports import import_dotted_ref
+
+logger = logging.getLogger(__name__)
+
+_AGENT_CACHE_MAXSIZE = 32
+
+
+class _LRUCache:
+    """Minimal OrderedDict-based LRU cache with a fixed capacity."""
+
+    def __init__(self, maxsize: int = _AGENT_CACHE_MAXSIZE) -> None:
+        self._maxsize = maxsize
+        self._data: OrderedDict[str, Any] = OrderedDict()
+
+    def get(self, key: str) -> Any | None:
+        if key not in self._data:
+            return None
+        self._data.move_to_end(key)
+        return self._data[key]
+
+    def set(self, key: str, value: Any) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+        else:
+            if len(self._data) >= self._maxsize:
+                self._data.popitem(last=False)
+        self._data[key] = value
+
+    def __len__(self) -> int:
+        return len(self._data)
 
 
 def build_sub_agent(
@@ -68,12 +99,14 @@ def build_agent_node(
     all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     instruction_template = cfg.instruction
     output_schema_class = _load_output_schema(cfg.output_schema)
-    # Cache Agent instances keyed by resolved instruction.  rerun_on_resume
-    # re-invokes this entire generator on every tool-call cycle; recreating
-    # Agent each time triggers McpToolset.get_tools() → list_tools() RPC for
-    # every turn.  Caching avoids that round-trip while staying correct across
-    # workflow invocations with different state (different cache key).
-    _agent_cache: dict[str, Agent] = {}
+    # LRU-bounded cache of Agent instances keyed by resolved instruction.
+    # rerun_on_resume re-invokes this generator on every tool-call cycle;
+    # recreating Agent each time triggers McpToolset.get_tools() → list_tools()
+    # RPC for every turn.  Caching avoids that round-trip while staying correct
+    # across workflow invocations with different state (different cache key).
+    # Bounded at _AGENT_CACHE_MAXSIZE entries to prevent unbounded growth in
+    # long-running processes where state values vary widely.
+    _agent_cache: _LRUCache = _LRUCache()
 
     async def _wrapper(ctx: Context, node_input: Any) -> AsyncGenerator:
         if not hasattr(ctx.state, "to_dict"):
@@ -84,7 +117,10 @@ def build_agent_node(
         state_dict = ctx.state.to_dict()
         resolved_instruction = resolve(instruction_template, state_dict)
 
-        if resolved_instruction not in _agent_cache:
+        logger.info("node '%s' start", agent_name)
+
+        agent = _agent_cache.get(resolved_instruction)
+        if agent is None:
             agent_kwargs: dict[str, Any] = dict(
                 name=agent_name,
                 instruction=resolved_instruction,
@@ -102,9 +138,19 @@ def build_agent_node(
                 agent_kwargs["include_contents"] = cfg.include_contents
             if output_schema_class is not None:
                 agent_kwargs["output_schema"] = output_schema_class
-            _agent_cache[resolved_instruction] = Agent(**agent_kwargs)
+            agent = Agent(**agent_kwargs)
+            _agent_cache.set(resolved_instruction, agent)
+            logger.debug(
+                "node '%s': created new Agent instance (cache size=%d)",
+                agent_name, len(_agent_cache),
+            )
 
-        result = await ctx.run_node(_agent_cache[resolved_instruction], node_input=node_input)
+        result = await ctx.run_node(agent, node_input=node_input)
+        output = state_dict.get(agent_name, "")
+        logger.info(
+            "node '%s' done (output_len=%d)",
+            agent_name, len(str(output)),
+        )
         yield result
 
     _wrapper.__name__ = agent_name
