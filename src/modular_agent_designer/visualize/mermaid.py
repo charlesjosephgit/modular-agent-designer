@@ -49,6 +49,9 @@ def render_mermaid(cfg: "RootConfig") -> str:
             label = f"{node_name}<br/>({model_alias})"
             if entry.mode == "chat":
                 label += " · chat"
+            # Show retry badge if configured.
+            if entry.retry is not None:
+                label += f" · retry×{entry.retry.max_retries}"
             lines.append(f'    {safe_name}["{label}"]')
         elif isinstance(entry, NodeRefConfig):
             ref = _sanitize(entry.ref)
@@ -83,8 +86,44 @@ def render_mermaid(cfg: "RootConfig") -> str:
     # Workflow edges
     for edge in cfg.workflow.edges:
         src = edge.from_
+
+        # Handle fan-out edges (to: [list])
+        if isinstance(edge.to, list):
+            for dst in edge.to:
+                if edge.parallel:
+                    # Parallel fan-out: thick arrows
+                    lines.append(f'    {src} ==> {dst}')
+                else:
+                    lines.append(f'    {src} --> {dst}')
+            # Show join target if specified
+            if edge.join is not None:
+                for dst in edge.to:
+                    lines.append(f'    {dst} -.-> {edge.join}')
+            continue
+
         dst = edge.to
         label = _edge_label(edge.condition)
+
+        # on_error edges: red dashed style
+        if edge.on_error:
+            error_label = "on_error"
+            lines.append(f'    {src} -. "{error_label}" .-> {dst}')
+            continue
+
+        # Loop edges: thick arrows with iteration label
+        if edge.loop is not None:
+            loop_label = f"loop ≤{edge.loop.max_iterations}×"
+            if label:
+                loop_label = f"{label} | {loop_label}"
+            lines.append(f'    {src} == "{loop_label}" ==> {dst}')
+            # Show on_exhausted target if specified
+            if edge.loop.on_exhausted is not None:
+                lines.append(
+                    f'    {src} -. "exhausted" .-> {edge.loop.on_exhausted}'
+                )
+            continue
+
+        # Normal edges
         if label is None:
             lines.append(f"    {src} --> {dst}")
         else:

@@ -244,7 +244,14 @@ def list_workflow(yaml_path: str) -> None:
             tool_str = f"  tools={a.tools}" if a.tools else ""
             sub_str = f"  sub_agents={a.sub_agents}" if a.sub_agents else ""
             mode_str = f"  mode={a.mode}" if a.mode else ""
-            click.echo(f"  {agent_name}{tag_str}: model={a.model}{mode_str}{tool_str}{sub_str}")
+            retry_str = ""
+            if a.retry is not None:
+                retry_str = (
+                    f"  retry(max={a.retry.max_retries}, "
+                    f"backoff={a.retry.backoff}, "
+                    f"delay={a.retry.delay_seconds}s)"
+                )
+            click.echo(f"  {agent_name}{tag_str}: model={a.model}{mode_str}{tool_str}{sub_str}{retry_str}")
         elif isinstance(a, NodeRefConfig):
             click.echo(f"  {agent_name}{tag_str}: custom node ref={a.ref}")
 
@@ -256,18 +263,43 @@ def list_workflow(yaml_path: str) -> None:
     if wf.edges:
         click.echo(f"  edges ({len(wf.edges)}):")
         for edge in wf.edges:
-            cond = ""
+            # Build the target display.
+            if isinstance(edge.to, list):
+                to_str = f"[{', '.join(edge.to)}]"
+            else:
+                to_str = edge.to
+
+            # Build decorators.
+            decorators: list[str] = []
+
             if edge.condition is not None:
                 c = edge.condition
                 if c == "__DEFAULT__":
-                    cond = " [default]"
+                    decorators.append("default")
                 elif hasattr(c, "eval"):
-                    cond = f" [eval: {c.eval}]"
+                    decorators.append(f"eval: {c.eval}")
                 elif isinstance(c, list):
-                    cond = f" [if: {' | '.join(str(v) for v in c)}]"
+                    decorators.append(f"if: {' | '.join(str(v) for v in c)}")
                 else:
-                    cond = f" [if: {c}]"
-            click.echo(f"    {edge.from_} -> {edge.to}{cond}")
+                    decorators.append(f"if: {c}")
+
+            if edge.loop is not None:
+                loop_str = f"loop ≤{edge.loop.max_iterations}×"
+                if edge.loop.on_exhausted:
+                    loop_str += f" → {edge.loop.on_exhausted}"
+                decorators.append(loop_str)
+
+            if edge.parallel:
+                decorators.append("parallel")
+
+            if edge.join is not None:
+                decorators.append(f"join: {edge.join}")
+
+            if edge.on_error:
+                decorators.append("on_error")
+
+            dec_str = f" [{', '.join(decorators)}]" if decorators else ""
+            click.echo(f"    {edge.from_} -> {to_str}{dec_str}")
     else:
         click.echo("  edges: (none)")
     click.echo("")

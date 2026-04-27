@@ -1,0 +1,57 @@
+name: loop_workflow
+description: >
+  Demonstrates loop/cycle support. A writer drafts content, a reviewer
+  evaluates it. If the reviewer says "revise", the loop sends it back
+  to the writer — up to 3 iterations. After exhausting iterations,
+  the workflow routes to a finalizer node.
+
+models:
+  ollama:
+    provider: ollama
+    model: "ollama_chat/gemma4:e4b"
+
+agents:
+  writer:
+    model: ollama
+    instruction: |
+      Write a short paragraph about: {{state.user_input.topic}}
+      {{#if state.writer}}
+      If this is a revision, improve on the previous draft:
+      {{state.writer}}
+      {{/if}}
+
+  reviewer:
+    model: ollama
+    instruction: |
+      Review this draft and respond with ONLY the word "approved" or "revise":
+      {{state.writer}}
+
+  finalizer:
+    model: ollama
+    instruction: |
+      Polish and finalize this content for publication:
+      {{state.writer}}
+
+workflow:
+  entry: writer
+  nodes:
+    - writer
+    - reviewer
+    - finalizer
+  edges:
+    # writer → reviewer (unconditional)
+    - from: writer
+      to: reviewer
+
+    # reviewer → writer (loop back if "revise", max 3 iterations)
+    - from: reviewer
+      to: writer
+      condition: "revise"
+      loop:
+        max_iterations: 3
+        on_exhausted: finalizer
+
+    # reviewer → finalizer (if approved)
+    - from: reviewer
+      to: finalizer
+      condition: "approved"

@@ -66,3 +66,64 @@ def test_int_value_stringified():
 def test_whitespace_in_template():
     state = {"x": "hello"}
     assert resolve("{{ state.x }}", state) == "hello"
+
+
+# ---------- Conditional blocks ----------
+
+
+def test_conditional_block_included_when_key_present():
+    state = {"reviewer": "Needs more detail."}
+    text = "Base.{{#if state.reviewer}} Revision: {{state.reviewer}}{{/if}}"
+    assert resolve(text, state) == "Base. Revision: Needs more detail."
+
+
+def test_conditional_block_stripped_when_key_missing():
+    state: dict = {}
+    text = "Base.{{#if state.reviewer}} Revision: {{state.reviewer}}{{/if}}"
+    assert resolve(text, state) == "Base."
+
+
+def test_conditional_block_stripped_when_key_falsy_empty_string():
+    state = {"reviewer": ""}
+    text = "Base.{{#if state.reviewer}} Revision: {{state.reviewer}}{{/if}}"
+    assert resolve(text, state) == "Base."
+
+
+def test_conditional_block_multiline():
+    state = {"reviewer": "Add examples."}
+    text = (
+        "Write about topic.\n"
+        "{{#if state.reviewer}}\n"
+        "Improve on the previous draft:\n"
+        "{{state.reviewer}}\n"
+        "{{/if}}"
+    )
+    result = resolve(text, state)
+    assert "Improve on the previous draft:" in result
+    assert "Add examples." in result
+
+
+def test_conditional_block_multiline_stripped():
+    state: dict = {}
+    text = (
+        "Write about topic.\n"
+        "{{#if state.reviewer}}\n"
+        "Improve on the previous draft:\n"
+        "{{state.reviewer}}\n"
+        "{{/if}}"
+    )
+    result = resolve(text, state)
+    assert "Improve" not in result
+    assert result == "Write about topic.\n"
+
+
+def test_multiple_conditional_blocks():
+    state = {"a": "yes", "b": ""}
+    text = "{{#if state.a}}A{{/if}}-{{#if state.b}}B{{/if}}"
+    assert resolve(text, state) == "A-"
+
+
+def test_conditional_with_dotted_path():
+    state = {"user_input": {"extra": "info"}}
+    text = "{{#if state.user_input.extra}}Extra: {{state.user_input.extra}}{{/if}}"
+    assert resolve(text, state) == "Extra: info"

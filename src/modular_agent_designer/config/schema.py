@@ -160,6 +160,14 @@ class SkillConfig(BaseModel):
     ref: str
 
 
+class RetryConfig(BaseModel):
+    """Per-agent retry configuration for error recovery."""
+    model_config = ConfigDict(extra="forbid")
+    max_retries: int = Field(default=3, ge=1, le=10)
+    backoff: Literal["fixed", "exponential"] = "fixed"
+    delay_seconds: float = Field(default=1.0, ge=0)
+
+
 class AgentConfig(BaseModel):
     type: Literal["agent"] = "agent"
     model: str
@@ -180,6 +188,7 @@ class AgentConfig(BaseModel):
     include_contents: Literal["default", "none"] = "default"
     disallow_transfer_to_parent: bool = False
     disallow_transfer_to_peers: bool = False
+    retry: Optional[RetryConfig] = None
 
     @model_validator(mode="after")
     def _validate_instruction(self) -> "AgentConfig":
@@ -213,18 +222,64 @@ class EvalCondition(BaseModel):
     eval: str
 
 
+class LoopConfig(BaseModel):
+    """Configuration for an edge that forms an intentional cycle."""
+    model_config = ConfigDict(extra="forbid")
+    max_iterations: int = Field(default=3, ge=1, le=100)
+    on_exhausted: Optional[str] = Field(
+        default=None,
+        description="Node to route to when max_iterations is reached. "
+        "If None, the branch terminates with a log warning.",
+    )
+
+
 class EdgeConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     from_: str = Field(alias="from")
-    to: str
+    to: Union[str, list[str]]
     condition: Optional[
         Union[EvalCondition, str, int, bool, list[Union[str, int, bool]]]
     ] = None
+    loop: Optional[LoopConfig] = None
+    on_error: bool = False
+    parallel: bool = False
+    join: Optional[str] = None
 
     @model_validator(mode="after")
-    def handle_default_condition(self) -> "EdgeConfig":
+    def _validate_edge(self) -> "EdgeConfig":
+        # Normalise 'default' → '__DEFAULT__'
         if self.condition == "default":
             self.condition = "__DEFAULT__"
+
+        to_is_list = isinstance(self.to, list)
+
+        # parallel / join require to: [list]
+        if self.parallel and not to_is_list:
+            raise ValueError(
+                "'parallel: true' requires 'to' to be a list of nodes"
+            )
+        if self.join is not None and not to_is_list:
+            raise ValueError(
+                "'join' requires 'to' to be a list of nodes"
+            )
+
+        # loop is not compatible with list-to or on_error
+        if self.loop is not None:
+            if to_is_list:
+                raise ValueError(
+                    "'loop' is not compatible with fan-out edges (to: [list])"
+                )
+            if self.on_error:
+                raise ValueError(
+                    "'loop' and 'on_error' cannot be used on the same edge"
+                )
+
+        # on_error edges must not have conditions (they fire on failure)
+        if self.on_error and self.condition is not None:
+            raise ValueError(
+                "'on_error: true' edges cannot have a 'condition'"
+            )
+
         return self
 
 
@@ -261,6 +316,53 @@ def _detect_sub_agent_cycles(agents: dict[str, Any]) -> None:
             dfs(name)
 
 
+def _detect_workflow_cycles(
+    node_set: set[str],
+    edges: list["EdgeConfig"],
+    loop_edges: set[tuple[str, str]],
+) -> None:
+    """Raise ValueError if workflow edges form a cycle not covered by a loop config.
+
+    Edges in *loop_edges* (from, to) are intentional cycles and are excluded
+    from cycle detection. Any other cycle is an accidental infinite loop.
+    """
+    adj: dict[str, list[str]] = {name: [] for name in node_set}
+    for edge in edges:
+        to_targets = edge.to if isinstance(edge.to, list) else [edge.to]
+        for t in to_targets:
+            # Skip intentional loop edges from cycle detection.
+            if (edge.from_, t) in loop_edges:
+                continue
+            adj[edge.from_].append(t)
+
+    UNVISITED, IN_PROGRESS, DONE = 0, 1, 2
+    state: dict[str, int] = {name: UNVISITED for name in node_set}
+    path: list[str] = []
+
+    def dfs(node: str) -> None:
+        state[node] = IN_PROGRESS
+        path.append(node)
+        for child in adj.get(node, []):
+            if child not in state:
+                continue
+            if state[child] == IN_PROGRESS:
+                cycle_start = path.index(child)
+                cycle = path[cycle_start:] + [child]
+                raise ValueError(
+                    f"Accidental cycle detected in workflow edges: "
+                    f"{' -> '.join(cycle)}. "
+                    f"Add a 'loop:' config to the edge to make this intentional."
+                )
+            if state[child] == UNVISITED:
+                dfs(child)
+        path.pop()
+        state[node] = DONE
+
+    for name in list(node_set):
+        if state[name] == UNVISITED:
+            dfs(name)
+
+
 class WorkflowConfig(BaseModel):
     nodes: list[str]
     edges: list[EdgeConfig]
@@ -268,23 +370,58 @@ class WorkflowConfig(BaseModel):
     max_llm_calls: int = 20
 
     @model_validator(mode="after")
-    def validate_dag(self) -> "WorkflowConfig":
+    def validate_workflow(self) -> "WorkflowConfig":
         node_set = set(self.nodes)
         if self.entry not in node_set:
             raise ValueError(f"entry '{self.entry}' not found in nodes list")
+
+        # Collect edges that have loop config for cycle-tolerance later.
+        loop_edges: set[tuple[str, str]] = set()
+
         for edge in self.edges:
             if edge.from_ not in node_set:
                 raise ValueError(
                     f"edge 'from: {edge.from_}' references unknown node"
                 )
-            if edge.to not in node_set:
+
+            # Validate 'to' targets (str or list[str]).
+            to_targets = edge.to if isinstance(edge.to, list) else [edge.to]
+            for t in to_targets:
+                if t not in node_set:
+                    raise ValueError(
+                        f"edge 'to: {t}' references unknown node"
+                    )
+
+            # Validate join target.
+            if edge.join is not None and edge.join not in node_set:
                 raise ValueError(
-                    f"edge 'to: {edge.to}' references unknown node"
+                    f"edge 'join: {edge.join}' references unknown node"
                 )
 
+            # Validate loop on_exhausted target.
+            if (
+                edge.loop is not None
+                and edge.loop.on_exhausted is not None
+                and edge.loop.on_exhausted not in node_set
+            ):
+                raise ValueError(
+                    f"loop on_exhausted '{edge.loop.on_exhausted}' "
+                    f"references unknown node"
+                )
+
+            # Track loop edges.
+            if edge.loop is not None:
+                assert isinstance(edge.to, str)
+                loop_edges.add((edge.from_, edge.to))
+
         # Edge-coherence checks grouped by source.
+        # Fan-out edges (to: [list]) are excluded from mix-checking since
+        # they are always unconditional.
         by_src: dict[str, list] = defaultdict(list)
         for edge in self.edges:
+            # Skip fan-out edges and on_error edges from coherence checks.
+            if isinstance(edge.to, list) or edge.on_error:
+                continue
             by_src[edge.from_].append(edge)
         for src, src_edges in by_src.items():
             defaults = [e for e in src_edges if e.condition == "__DEFAULT__"]
@@ -303,6 +440,9 @@ class WorkflowConfig(BaseModel):
                     f"source '{src}' mixes unconditional and conditional edges"
                     " — use only one type per source"
                 )
+
+        # Detect accidental cycles (cycles NOT covered by a loop config).
+        _detect_workflow_cycles(node_set, self.edges, loop_edges)
 
         return self
 

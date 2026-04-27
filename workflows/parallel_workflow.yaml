@@ -1,0 +1,88 @@
+name: parallel_workflow
+description: >
+  Demonstrates parallel fan-out / fan-in. A dispatcher fans out to
+  three research agents running concurrently, then a synthesizer
+  joins all results and produces a final summary. A presenter
+  formats the summary for the end user.
+
+models:
+  ollama:
+    provider: ollama
+    model: "ollama_chat/gemma4:e4b"
+
+agents:
+  dispatcher:
+    model: ollama
+    mode: chat
+    instruction: |
+      You are a research coordinator. Summarize what needs to be researched
+      about: {{state.user_input.topic}}
+      Output a brief research plan.
+
+  historical_researcher:
+    model: ollama
+    mode: chat
+    instruction: |
+      Research the historical background of: {{state.user_input.topic}}
+      Focus on origins, key milestones, and historical significance.
+      Keep your response concise (2-3 paragraphs).
+
+  technical_researcher:
+    model: ollama
+    mode: chat
+    instruction: |
+      Research the technical aspects of: {{state.user_input.topic}}
+      Focus on how it works, key technologies, and implementation details.
+      Keep your response concise (2-3 paragraphs).
+
+  social_researcher:
+    model: ollama
+    mode: chat
+    instruction: |
+      Research the social impact of: {{state.user_input.topic}}
+      Focus on how it affects people, communities, and society.
+      Keep your response concise (2-3 paragraphs).
+
+  synthesizer:
+    model: ollama
+    mode: chat
+    instruction: |
+      Combine these research findings into a comprehensive summary:
+
+      Historical: {{state.historical_researcher}}
+      Technical: {{state.technical_researcher}}
+      Social: {{state.social_researcher}}
+
+  presenter:
+    model: ollama
+    mode: chat
+    instruction: |
+      You are a professional content presenter. Take this research summary
+      and format it as a polished, reader-friendly report with:
+      - A compelling title
+      - An executive summary (2-3 sentences)
+      - Key findings organized by section
+      - A brief conclusion
+
+      Research summary to format:
+      {{state.synthesizer}}
+
+workflow:
+  entry: dispatcher
+  nodes:
+    - dispatcher
+    - historical_researcher
+    - technical_researcher
+    - social_researcher
+    - synthesizer
+    - presenter
+  edges:
+    # dispatcher fans out to 3 researchers, join at synthesizer
+    - from: dispatcher
+      to: [historical_researcher, technical_researcher, social_researcher]
+      parallel: true
+      join: synthesizer
+
+    # synthesizer → presenter (unconditional)
+    - from: synthesizer
+      to: presenter

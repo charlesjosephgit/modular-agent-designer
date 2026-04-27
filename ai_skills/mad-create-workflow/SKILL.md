@@ -148,6 +148,18 @@ agents:
 - Nested refs work: `{{state.user_input.config.mode}}`.
 - Missing key → `StateReferenceError` with the exact path and available keys listed. Use this to debug.
 
+**Conditional blocks (for loops):**
+
+Use `{{#if state.key}}…{{/if}}` to include content only when a state key exists and is truthy. Essential for loops where a node re-runs and its previous output may not exist on the first pass:
+
+```yaml
+instruction: |
+  Write about: {{state.user_input.topic}}
+  {{#if state.reviewer}}
+  Reviewer feedback: {{state.reviewer}}
+  {{/if}}
+```
+
 ---
 
 ## Step 4 — Wire the Workflow Graph
@@ -181,6 +193,28 @@ workflow:
 ```
 
 For full routing coverage (eval expressions, list OR, self-loops), load the `mad-routing` skill.
+
+**Loop workflow** (writer → reviewer → revise cycle):
+
+```yaml
+workflow:
+  nodes: [writer, reviewer, finalizer]
+  entry: writer
+  edges:
+    - from: writer
+      to: reviewer
+    - from: reviewer
+      to: writer
+      condition: "revise"
+      loop:
+        max_iterations: 3
+        on_exhausted: finalizer
+    - from: reviewer
+      to: finalizer
+      condition: "approved"
+```
+
+For full loop, error routing, and parallel edge coverage, load the `mad-routing` skill.
 
 ---
 

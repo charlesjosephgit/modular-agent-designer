@@ -6,8 +6,12 @@ Each wrapper is a @node(rerun_on_resume=True) async generator that:
   3. Constructs a fresh Agent with the resolved instruction (cached by LRU).
   4. Calls ctx.run_node(agent, ...) — requires rerun_on_resume=True on caller.
   5. Yields the result; Agent's output_key writes it to ctx.state[agent_name].
+
+Optionally wraps the call in a retry loop when the agent has a ``retry`` config.
 """
 from __future__ import annotations
+
+import asyncio
 
 import logging
 from collections import OrderedDict
@@ -145,19 +149,63 @@ def build_agent_node(
                 agent_name, len(_agent_cache),
             )
 
-        result = await ctx.run_node(agent, node_input=node_input)
-        output = state_dict.get(agent_name, "")
-        logger.info(
-            "node '%s' done (output_len=%d)",
-            agent_name, len(str(output)),
-        )
-        yield result
+        # Retry wrapper: if retry config is set, catch exceptions and retry.
+        retry_cfg = cfg.retry
+        max_attempts = (retry_cfg.max_retries + 1) if retry_cfg else 1
+        last_exc: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = await ctx.run_node(agent, node_input=node_input)
+                output = state_dict.get(agent_name, "")
+                logger.info(
+                    "node '%s' done (output_len=%d)",
+                    agent_name, len(str(output)),
+                )
+                yield result
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    delay = _compute_retry_delay(retry_cfg, attempt)
+                    logger.warning(
+                        "node '%s': attempt %d/%d failed (%s: %s), "
+                        "retrying in %.1fs",
+                        agent_name, attempt, max_attempts,
+                        type(exc).__name__, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        "node '%s': all %d attempts failed (%s: %s)",
+                        agent_name, max_attempts,
+                        type(exc).__name__, exc,
+                    )
+
+        # All retries exhausted — write error info to state for on_error routing.
+        error_key = f"_error_{agent_name}"
+        error_info = {
+            "error_type": type(last_exc).__name__,
+            "error_message": str(last_exc),
+            "attempts": max_attempts,
+        }
+        from google.adk.events.event import Event as AdkEvent
+        yield AdkEvent(state={error_key: error_info}, output=str(last_exc))
 
     _wrapper.__name__ = agent_name
     _wrapper.__qualname__ = agent_name
 
     # rerun_on_resume=True is required by ADK when the node calls ctx.run_node.
     return adk_node(rerun_on_resume=True)(_wrapper)
+
+
+def _compute_retry_delay(retry_cfg, attempt: int) -> float:
+    """Compute delay in seconds for the given retry attempt."""
+    if retry_cfg is None:
+        return 0
+    if retry_cfg.backoff == "exponential":
+        return retry_cfg.delay_seconds * (2 ** (attempt - 1))
+    return retry_cfg.delay_seconds
 
 
 def _load_output_schema(ref: str | None):

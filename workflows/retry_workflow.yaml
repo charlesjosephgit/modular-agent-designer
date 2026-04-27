@@ -1,0 +1,51 @@
+name: retry_workflow
+description: >
+  Demonstrates retry and error routing. An API caller node has retry
+  configuration for transient failures. If all retries are exhausted,
+  the workflow routes to an error handler via on_error.
+
+models:
+  ollama:
+    provider: ollama
+    model: "ollama/gemma4:e4b"
+
+agents:
+  api_caller:
+    model: ollama
+    instruction: |
+      You are an API integration agent. Process this request:
+      {{state.user_input.request}}
+      Return the API response data. for testing fail request pass random string
+    retry:
+      max_retries: 3
+      backoff: exponential
+      delay_seconds: 1
+
+  success_handler:
+    model: ollama
+    instruction: |
+      The API call succeeded. Format and present these results to the user:
+      {{state.api_caller}}
+
+  error_handler:
+    model: ollama
+    instruction: |
+      The API call failed after multiple retries. Provide a helpful error
+      message and suggest alternatives to the user.
+      Error details: {{state._error_api_caller}}
+
+workflow:
+  entry: api_caller
+  nodes:
+    - api_caller
+    - success_handler
+    - error_handler
+  edges:
+    # On success, proceed to success handler
+    - from: api_caller
+      to: success_handler
+
+    # On failure (after retries exhausted), route to error handler
+    - from: api_caller
+      to: error_handler
+      on_error: true

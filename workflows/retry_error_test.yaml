@@ -1,0 +1,52 @@
+name: retry_error_test
+description: >
+  Test variant of retry_workflow that deliberately triggers the error_handler.
+  Uses a nonexistent model to force the api_caller to fail after retries.
+
+models:
+  ollama:
+    provider: ollama
+    model: "ollama_chat/gemma4:e4b"
+  broken:
+    provider: ollama
+    model: "ollama_chat/nonexistent_model_12345"
+
+agents:
+  api_caller:
+    model: broken
+    mode: chat
+    instruction: |
+      You are an API integration agent. Process this request:
+      {{state.user_input.request}}
+    retry:
+      max_retries: 2
+      backoff: fixed
+      delay_seconds: 1
+
+  success_handler:
+    model: ollama
+    mode: chat
+    instruction: |
+      The API call succeeded. Format and present these results to the user:
+      {{state.api_caller}}
+
+  error_handler:
+    model: ollama
+    mode: chat
+    instruction: |
+      The API call failed after multiple retries. Provide a helpful error
+      message and suggest alternatives to the user.
+      Error details: {{state._error_api_caller}}
+
+workflow:
+  entry: api_caller
+  nodes:
+    - api_caller
+    - success_handler
+    - error_handler
+  edges:
+    - from: api_caller
+      to: success_handler
+    - from: api_caller
+      to: error_handler
+      on_error: true

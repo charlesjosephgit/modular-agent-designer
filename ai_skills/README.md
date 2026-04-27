@@ -13,7 +13,7 @@ These are instruction skills for AI coding tools — **not** ADK agent skills us
 | First time using the library / full reference | `mad-overview` |
 | Building a new workflow from scratch | `mad-create-workflow` |
 | Adding tools (builtin, python, MCP stdio/SSE/HTTP) | `mad-tools` |
-| Setting up conditional routing or branching | `mad-routing` |
+| Conditional routing, loops, error routing, parallel edges | `mad-routing` |
 | Using sub-agents, skills, output schemas, or custom nodes | `mad-sub-agents` |
 
 ---

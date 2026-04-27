@@ -131,6 +131,10 @@ agents:
     instruction_file: prompts.my_agent  # dotted ref → <cwd>/prompts/my_agent.md
     tools: [tool_alias, ...]      # optional; references to tools section
     output_schema: pkg.Module.Class  # optional; Pydantic v2 class
+    retry:                        # optional; retry on error
+      max_retries: 3              # 1–10, default 3
+      backoff: fixed              # fixed | exponential
+      delay_seconds: 1.0          # seconds between retries
 
   <custom_node_name>:
     type: node                    # escape hatch for non-LLM logic
@@ -145,6 +149,19 @@ workflow:
     - from: agent_a
       to: agent_c
       condition: default               # optional: fallback if no other condition matches
+    - from: agent_a
+      to: [agent_b, agent_c]
+      parallel: true                   # optional: fan-out to multiple nodes concurrently
+      join: agent_d                    # optional: barrier node — wait for all targets
+    - from: agent_a
+      to: agent_b
+      condition: "retry"
+      loop:                            # optional: intentional cycle with a safety limit
+        max_iterations: 3
+        on_exhausted: agent_c          # optional: route here when limit reached
+    - from: agent_a
+      to: error_handler
+      on_error: true                   # optional: fire only if agent_a fails all retries
   entry: agent_a                       # first node to run
 ```
 
@@ -152,7 +169,7 @@ workflow:
 
 ## Branching & Loops
 
-The Modular Agent Designer supports complex graph topologies including conditional branching and retry loops directly in YAML.
+The Modular Agent Designer supports complex graph topologies including conditional branching, retry loops, parallel fan-out, and error routing directly in YAML.
 
 ### Conditional Edges
 Nodes (especially Agents) can yield a value that determines which edge to follow. 
@@ -213,19 +230,115 @@ edges:
 
 #### Validation rules
 
-The loader enforces two rules at parse time (before any workflow runs):
+The loader enforces these rules at parse time (before any workflow runs):
 - A source node may not have more than one `default` edge.
 - A source node may not mix unconditional edges (no `condition`) with conditional edges — choose one type per source.
+- Edges that form a cycle **must** have a `loop:` config — accidental cycles without `loop:` are rejected at load time with a clear error message.
 
-### Self-Loops & Retries
-To retry a node (e.g., if a model's output is invalid), route the node back to itself:
+### Loop Config (Controlled Cycles)
+
+For review/revision loops where a node routes back to a prior node, use `loop:` to set a safety limit and an optional escape route:
 
 ```yaml
 edges:
-  - from: researcher
-    to: researcher
-    condition: "retry"                 # If 'researcher' returns "retry", it runs again
+  # reviewer → writer loop (max 3 revisions)
+  - from: reviewer
+    to: writer
+    condition: "revise"
+    loop:
+      max_iterations: 3           # 1–100; required
+      on_exhausted: finalizer     # optional: route here when limit reached
+
+  # reviewer → finalizer (when approved)
+  - from: reviewer
+    to: finalizer
+    condition: "approved"
 ```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_iterations` | int | 3 | Maximum number of loop iterations (1–100) |
+| `on_exhausted` | string | `null` | Node to route to when the limit is reached. If `null`, the branch terminates with a log warning. |
+
+The framework tracks iteration counts in state automatically (key: `_loop_<from>_<to>_iter`). On exhaustion the counter is reset to 0.
+
+See [`workflows/loop_workflow.yaml`](workflows/loop_workflow.yaml) for a runnable writer→reviewer→finalizer loop.
+
+### Agent Retry Config
+
+For transient errors (API timeouts, rate limits), agents can retry automatically before the workflow fails:
+
+```yaml
+agents:
+  researcher:
+    model: smart
+    instruction: "Research this topic: {{state.user_input.topic}}"
+    retry:
+      max_retries: 3              # 1–10 additional attempts (default: 3)
+      backoff: exponential        # fixed | exponential
+      delay_seconds: 1.0          # base delay between retries
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_retries` | int | 3 | Number of retry attempts after the first failure (1–10) |
+| `backoff` | string | `fixed` | `fixed` — constant delay; `exponential` — delay doubles each attempt |
+| `delay_seconds` | float | 1.0 | Base delay in seconds (≥ 0) |
+
+If all retries are exhausted, the error info is written to `state._error_<agent_name>` and the workflow can route via `on_error` edges.
+
+### Error Routing
+
+Edges with `on_error: true` fire **only** when the source node fails (after exhausting all retries). They are mutually exclusive with `condition:`:
+
+```yaml
+edges:
+  # Normal success path
+  - from: researcher
+    to: writer
+
+  # Error fallback path
+  - from: researcher
+    to: error_handler
+    on_error: true
+```
+
+When a node has both normal and `on_error` edges, the framework injects a unified error router that checks for error state and routes to exactly one path — either the success handler or the error handler, never both.
+
+The error info available in state (`state._error_<agent_name>`) is a dict:
+```json
+{
+  "error_type": "TimeoutError",
+  "error_message": "Request timed out after 30s",
+  "attempts": 4
+}
+```
+
+### Parallel / Fan-Out Edges
+
+Send work to multiple nodes concurrently using `to: [list]` with `parallel: true`:
+
+```yaml
+edges:
+  - from: planner
+    to: [researcher_a, researcher_b, researcher_c]
+    parallel: true
+    join: synthesizer              # wait for all three, then proceed
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `to` | `string \| list[string]` | — | Single target or list of fan-out targets |
+| `parallel` | bool | `false` | Must be `true` when `to` is a list |
+| `join` | string | `null` | Barrier node — the workflow proceeds to this node only after all fan-out targets have written their output to state |
+
+The framework auto-generates an invisible join node that polls `ctx.state` for all source outputs before routing to the `join` target.
+
+**Rules:**
+- `parallel: true` requires `to` to be a list.
+- `join` requires `to` to be a list.
+- `loop` is not compatible with fan-out edges (`to: [list]`).
+- Fan-out edges are always unconditional (no `condition:` allowed).
 
 ---
 
@@ -325,10 +438,28 @@ instruction: |
 
 `user_input` is always available from the `--input` JSON argument.
 
+### Conditional Blocks
+
+Use `{{#if state.key}}…{{/if}}` to include a section only when the key exists in state and is truthy. This is especially useful in loops where a node's output may not exist on the first iteration:
+
+```yaml
+instruction: |
+  Write a short paragraph about: {{state.user_input.topic}}
+  {{#if state.reviewer}}
+  The reviewer provided this feedback — incorporate it:
+  {{state.reviewer}}
+  {{/if}}
+```
+
+- The inner content (including any `{{state.x}}` templates) is included only when the condition key exists and is truthy.
+- If the key is missing or falsy (empty string, `null`, `0`, `false`), the entire block is removed.
+- Conditional blocks are resolved **before** value templates — so `{{state.x}}` references inside the block are safe.
+- Nesting conditional blocks is not supported.
+
 **Rules:**
 - Double-brace syntax `{{state.x}}` — resolved by Modular Agent Designer at node execution time.
 - Single-brace `{key}` — passed through to ADK's native state injection.
-- Missing key → `StateReferenceError` naming the exact missing path and available keys. No silent empty strings.
+- Missing key in a `{{state.x}}` reference (outside a conditional block) → `StateReferenceError` naming the exact missing path and available keys. No silent empty strings.
 
 ---
 
@@ -687,7 +818,7 @@ The [`ai_skills/`](ai_skills/) directory contains five task-specific skills for 
 | Full reference / first time using the library | `mad-overview` |
 | Building a new workflow from scratch | `mad-create-workflow` |
 | Adding tools (builtin, python, MCP stdio/SSE/HTTP) | `mad-tools` |
-| Conditional routing, branching, eval conditions | `mad-routing` |
+| Conditional routing, loops, error routing, parallel edges | `mad-routing` |
 | Sub-agents, skills, output schemas, custom nodes | `mad-sub-agents` |
 
 ### Claude Code
@@ -789,7 +920,9 @@ export OPENAI_API_KEY=sk-...
 
 - **ADK version**: `google-adk[extensions]==2.0.0a3` (alpha — breaking changes expected)
 - **State injection**: Initial state from `--input` is set via `InMemorySessionService.create_session(state={"user_input": ...})` before the workflow runs
-- **Template timing**: `{{state.x.y}}` is resolved at node execution time (not workflow construction time) using `ctx.state.to_dict()`
-- **AgentNode wrapper**: Each YAML agent becomes a `@node(rerun_on_resume=True)` async generator — required by ADK when calling `ctx.run_node()`
-- **Branching**: Supports literal matching, list-based OR logic, and `default` catch-alls.
-- **Loops**: Graph cycles (like self-retries) are natively supported via edge definitions.vely supported via edge definitions.
+- **Template timing**: `{{state.x.y}}` is resolved at node execution time (not workflow construction time) using `ctx.state.to_dict()`. Conditional blocks `{{#if state.key}}…{{/if}}` are resolved first, then value templates.
+- **AgentNode wrapper**: Each YAML agent becomes a `@node(rerun_on_resume=True)` async generator — required by ADK when calling `ctx.run_node()`. Optionally wrapped in a retry loop when `retry:` config is set.
+- **Branching**: Supports literal matching, list-based OR logic, `eval` expressions, and `default` catch-alls.
+- **Loops**: Controlled via `loop:` config on edges. Iteration counters are tracked in state (`_loop_<from>_<to>_iter`). Accidental cycles (without `loop:`) are rejected at load time.
+- **Error routing**: `on_error: true` edges fire only when a node fails (after all retries). A unified error router ensures exactly one path fires (success or error).
+- **Parallel / Fan-out**: `to: [list]` with `parallel: true` dispatches to multiple nodes. An auto-generated join node (when `join:` is set) waits for all fan-out targets before continuing.

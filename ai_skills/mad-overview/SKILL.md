@@ -142,13 +142,14 @@ thinking:
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `model` | string | Yes | Must reference a key in `models:` |
-| `instruction` | string | One of | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time |
-| `instruction_file` | string | One of | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`; `{{state.x.y}}` templates work inside the file |
+| `instruction` | string | One of | Inline prompt; supports `{{state.x.y}}` and `{{#if state.x}}…{{/if}}` templates, resolved at execution time |
+| `instruction_file` | string | One of | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`; templates work inside the file |
 | `tools` | list[string] | No | References to keys in `tools:` |
 | `skills` | list[string] | No | References to keys in `skills:` |
 | `output_schema` | string | No | Dotted path to a Pydantic v2 class |
 | `sub_agents` | list[string] | No | Names of sub-agent agents; must NOT appear in `workflow.nodes` |
 | `mode` | string | No | `chat`, `task`, or `single_turn` |
+| `retry` | object | No | Retry config: `{max_retries: 3, backoff: fixed\|exponential, delay_seconds: 1.0}` |
 | `disallow_transfer_to_parent` | bool | No | Default: false |
 | `disallow_transfer_to_peers` | bool | No | Default: false |
 | `type` | string | No | `"node"` for custom BaseNode escape hatch |
@@ -165,6 +166,18 @@ thinking:
 | `edges` | list | Yes | Can be empty `[]` for single-node workflows |
 | `max_llm_calls` | int | No | Circuit breaker; default 20 |
 
+### Edge Fields
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `from` | string | — | Source node (required) |
+| `to` | `string \| list[string]` | — | Target node(s); list enables fan-out (required) |
+| `condition` | string/int/bool/list/eval | `null` | Routing condition (exact match, list OR, eval expression, or `default`) |
+| `loop` | object | `null` | `{max_iterations, on_exhausted}` — controlled cycle; required for any edge forming a loop |
+| `on_error` | bool | `false` | Fire only when source node fails (after all retries); mutually exclusive with `condition` |
+| `parallel` | bool | `false` | Fan-out; requires `to: [list]` |
+| `join` | string | `null` | Barrier node — wait for all fan-out targets; requires `to: [list]` |
+
 ---
 
 ## State System
@@ -180,6 +193,22 @@ instruction: |
 - Templates are resolved at **node execution time**, not compile time.
 - Missing key → `StateReferenceError` naming the exact missing path and available keys.
 - Pydantic model outputs are JSON-stringified before being stored.
+
+### Conditional Blocks
+
+Use `{{#if state.key}}…{{/if}}` to conditionally include instruction content:
+
+```yaml
+instruction: |
+  Write about: {{state.user_input.topic}}
+  {{#if state.reviewer}}
+  Reviewer feedback to incorporate: {{state.reviewer}}
+  {{/if}}
+```
+
+- Block included only when key exists and is truthy.
+- Resolved **before** value templates — `{{state.x}}` refs inside are safe.
+- Essential for loops where a node's output doesn't exist on the first iteration.
 
 ---
 
@@ -247,3 +276,6 @@ asyncio.run(main())
 - **MCP connections are lazy** — opened on first tool use, auto-closed by the ADK Runner. Don't manage their lifecycle manually.
 - **`${VAR}` in `env`/`headers` fails immediately at load time** if the env var is unset — by design.
 - **API keys checked at build time** — set them before calling `build_workflow()` or running the CLI.
+- **Cycles require `loop:` config** — any edge forming a cycle without `loop:` is rejected at load time to prevent accidental infinite loops.
+- **Use `{{#if state.x}}` in loops** — referencing `{{state.x}}` for a node that hasn't run yet raises `StateReferenceError`; wrap in a conditional block.
+- **`on_error` and `condition` are mutually exclusive** — error edges cannot have conditions.
