@@ -77,17 +77,25 @@ agents:
 
   writer:
     model: smart
+    description: "Writes polished articles from research findings."
     instruction: |
       Based on this research: {{state.researcher}}
       Write a polished 300-word article.
     output_schema: mypackage.models.Article   # optional Pydantic v2 class
+    output_key: article                       # state["article"] instead of state["writer"]
+    generate_content_config:
+      temperature: 0.8
+      max_output_tokens: 1024
 
   coordinator:
     model: smart
     mode: task
+    static_instruction: "You are a research coordinator. Be decisive."
     instruction: |
       Coordinate research on: {{state.user_input.topic}}
       Delegate to your sub-agents.
+    thinking:
+      thinking_budget: 1024
     sub_agents:
       - researcher
 
@@ -142,18 +150,44 @@ thinking:
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `model` | string | Yes | Must reference a key in `models:` |
-| `instruction` | string | One of | Inline prompt; supports `{{state.x.y}}` and `{{#if state.x}}…{{/if}}` templates, resolved at execution time |
-| `instruction_file` | string | One of | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`; templates work inside the file |
+| `description` | string | No | Shown to the parent LLM to decide delegation — strongly recommended for sub-agents |
+| `instruction` | string | One of | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time |
+| `instruction_file` | string | One of | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher` |
+| `static_instruction` | string | No | Cacheable static system content; never changes — ADK sends it to a cache-eligible position |
+| `static_instruction_file` | string | No | Dotted ref to a `.md` file containing the static instruction |
 | `tools` | list[string] | No | References to keys in `tools:` |
 | `skills` | list[string] | No | References to keys in `skills:` |
-| `output_schema` | string | No | Dotted path to a Pydantic v2 class |
+| `input_schema` | string | No | Dotted path to a Pydantic `BaseModel` class — constrains input when agent is invoked as a tool |
+| `output_schema` | string | No | Dotted path to a Pydantic v2 class for structured output |
+| `output_key` | string | No | State key to write output to; default is the agent name |
 | `sub_agents` | list[string] | No | Names of sub-agent agents; must NOT appear in `workflow.nodes` |
 | `mode` | string | No | `chat`, `task`, or `single_turn` |
+| `parallel_worker` | bool | No | Sub-agents only — allow parent to invoke concurrently with siblings |
+| `generate_content_config` | object | No | Per-agent generation overrides; see below |
+| `thinking` | object | No | `{thinking_budget, include_thoughts}` — builds a `BuiltInPlanner` (Gemini 2.5+ only) |
 | `retry` | object | No | Retry config: `{max_retries: 3, backoff: fixed\|exponential, delay_seconds: 1.0}` |
 | `disallow_transfer_to_parent` | bool | No | Default: false |
 | `disallow_transfer_to_peers` | bool | No | Default: false |
+| `include_contents` | string | No | `default` or `none`; `none` strips conversation history from the context |
 | `type` | string | No | `"node"` for custom BaseNode escape hatch |
 | `ref` | string | No | Dotted path to BaseNode subclass (when `type: node`) |
+
+### `generate_content_config` fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `temperature` | float | 0.0–2.0 |
+| `top_p` | float | 0.0–1.0 |
+| `top_k` | int | ≥ 1 |
+| `max_output_tokens` | int | ≥ 1 |
+| `candidate_count` | int | ≥ 1 |
+| `stop_sequences` | list[string] | Stop tokens |
+| `seed` | int | For reproducible outputs |
+| `presence_penalty` | float | |
+| `frequency_penalty` | float | |
+| `response_mime_type` | string | e.g. `"application/json"` or `"text/plain"` |
+| `cached_content` | string | Explicit cache resource name (advanced) |
+| `safety_settings` | list | `[{category: ..., threshold: ...}]` |
 
 ---
 

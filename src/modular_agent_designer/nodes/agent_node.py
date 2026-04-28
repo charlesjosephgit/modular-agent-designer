@@ -21,7 +21,7 @@ from google.adk import Agent, Context
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.workflow import node as adk_node
 
-from ..config.schema import AgentConfig
+from ..config.schema import AgentConfig, AgentGenerateContentConfig, AgentThinkingConfig
 from ..plugins.thinking import make_capture_thinking_callback
 from ..state.template import resolve
 from ..utils.imports import import_dotted_ref
@@ -78,6 +78,10 @@ def build_sub_agent(
         tools=all_tools,
         sub_agents=sub_agents,
     )
+    if cfg.description is not None:
+        agent_kwargs["description"] = cfg.description
+    if cfg.static_instruction is not None:
+        agent_kwargs["static_instruction"] = cfg.static_instruction
     if cfg.mode is not None:
         agent_kwargs["mode"] = cfg.mode
     if cfg.include_contents != "default":
@@ -86,8 +90,20 @@ def build_sub_agent(
         agent_kwargs["disallow_transfer_to_parent"] = True
     if cfg.disallow_transfer_to_peers:
         agent_kwargs["disallow_transfer_to_peers"] = True
+    if cfg.parallel_worker is not None:
+        agent_kwargs["parallel_worker"] = cfg.parallel_worker
+    if cfg.input_schema is not None:
+        agent_kwargs["input_schema"] = _load_input_schema(cfg.input_schema)
     if cfg.output_schema is not None:
         agent_kwargs["output_schema"] = _load_output_schema(cfg.output_schema)
+    if cfg.output_key is not None:
+        agent_kwargs["output_key"] = cfg.output_key
+    if cfg.generate_content_config is not None:
+        agent_kwargs["generate_content_config"] = _build_generate_content_config(
+            cfg.generate_content_config
+        )
+    if cfg.thinking is not None:
+        agent_kwargs["planner"] = _build_planner(cfg.thinking)
     return Agent(**agent_kwargs)
 
 
@@ -103,6 +119,13 @@ def build_agent_node(
     all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     instruction_template = cfg.instruction
     output_schema_class = _load_output_schema(cfg.output_schema)
+    input_schema_class = _load_input_schema(cfg.input_schema)
+    generate_content_config = (
+        _build_generate_content_config(cfg.generate_content_config)
+        if cfg.generate_content_config is not None
+        else None
+    )
+    planner = _build_planner(cfg.thinking) if cfg.thinking is not None else None
     # LRU-bounded cache of Agent instances keyed by resolved instruction.
     # rerun_on_resume re-invokes this generator on every tool-call cycle;
     # recreating Agent each time triggers McpToolset.get_tools() → list_tools()
@@ -130,18 +153,28 @@ def build_agent_node(
                 instruction=resolved_instruction,
                 model=model,
                 tools=all_tools,
-                output_key=agent_name,
+                output_key=cfg.output_key if cfg.output_key is not None else agent_name,
                 after_model_callback=make_capture_thinking_callback(agent_name),
                 sub_agents=sub_agents,
             )
+            if cfg.description is not None:
+                agent_kwargs["description"] = cfg.description
+            if cfg.static_instruction is not None:
+                agent_kwargs["static_instruction"] = cfg.static_instruction
             if cfg.mode is not None:
                 agent_kwargs["mode"] = cfg.mode
             elif tools or sub_agents:
                 agent_kwargs["mode"] = "chat"
             if cfg.include_contents != "default":
                 agent_kwargs["include_contents"] = cfg.include_contents
+            if input_schema_class is not None:
+                agent_kwargs["input_schema"] = input_schema_class
             if output_schema_class is not None:
                 agent_kwargs["output_schema"] = output_schema_class
+            if generate_content_config is not None:
+                agent_kwargs["generate_content_config"] = generate_content_config
+            if planner is not None:
+                agent_kwargs["planner"] = planner
             agent = Agent(**agent_kwargs)
             _agent_cache.set(resolved_instruction, agent)
             logger.debug(
@@ -157,7 +190,8 @@ def build_agent_node(
         for attempt in range(1, max_attempts + 1):
             try:
                 result = await ctx.run_node(agent, node_input=node_input)
-                output = state_dict.get(agent_name, "")
+                effective_output_key = cfg.output_key if cfg.output_key is not None else agent_name
+                output = state_dict.get(effective_output_key, "")
                 logger.info(
                     "node '%s' done (output_len=%d)",
                     agent_name, len(str(output)),
@@ -213,3 +247,58 @@ def _load_output_schema(ref: str | None):
     if ref is None:
         return None
     return import_dotted_ref(ref, context=f"output_schema '{ref}'")
+
+
+def _load_input_schema(ref: str | None):
+    """Dynamically import a Pydantic BaseModel subclass by dotted path, or return None."""
+    if ref is None:
+        return None
+    return import_dotted_ref(ref, context=f"input_schema '{ref}'")
+
+
+def _build_generate_content_config(acc: AgentGenerateContentConfig):
+    """Build a google.genai.types.GenerateContentConfig from schema config."""
+    from google.genai import types as genai_types
+    kwargs: dict = {}
+    if acc.temperature is not None:
+        kwargs["temperature"] = acc.temperature
+    if acc.top_p is not None:
+        kwargs["top_p"] = acc.top_p
+    if acc.top_k is not None:
+        kwargs["top_k"] = acc.top_k
+    if acc.max_output_tokens is not None:
+        kwargs["max_output_tokens"] = acc.max_output_tokens
+    if acc.candidate_count is not None:
+        kwargs["candidate_count"] = acc.candidate_count
+    if acc.stop_sequences is not None:
+        kwargs["stop_sequences"] = acc.stop_sequences
+    if acc.seed is not None:
+        kwargs["seed"] = acc.seed
+    if acc.presence_penalty is not None:
+        kwargs["presence_penalty"] = acc.presence_penalty
+    if acc.frequency_penalty is not None:
+        kwargs["frequency_penalty"] = acc.frequency_penalty
+    if acc.safety_settings is not None:
+        kwargs["safety_settings"] = [
+            genai_types.SafetySetting(
+                category=ss.category,
+                threshold=ss.threshold,
+            )
+            for ss in acc.safety_settings
+        ]
+    if acc.cached_content is not None:
+        kwargs["cached_content"] = acc.cached_content
+    if acc.response_mime_type is not None:
+        kwargs["response_mime_type"] = acc.response_mime_type
+    return genai_types.GenerateContentConfig(**kwargs)
+
+
+def _build_planner(thinking_cfg: AgentThinkingConfig):
+    """Build a BuiltInPlanner from per-agent thinking config."""
+    from google.adk.planners import BuiltInPlanner
+    from google.genai import types as genai_types
+    thinking_config = genai_types.ThinkingConfig(
+        include_thoughts=thinking_cfg.include_thoughts,
+        thinking_budget=thinking_cfg.thinking_budget,
+    )
+    return BuiltInPlanner(thinking_config=thinking_config)

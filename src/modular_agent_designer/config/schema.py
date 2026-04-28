@@ -26,6 +26,7 @@ def _expand_env(value: str, *, context: str) -> str:
 
     return _ENV_VAR_RE.sub(repl, value)
 
+
 # Map provider name to accepted model-string prefix(es).
 # google provider uses "gemini/" prefix (LiteLLM convention).
 # ollama accepts both "ollama/" (generate API) and "ollama_chat/" (chat API —
@@ -168,9 +169,53 @@ class RetryConfig(BaseModel):
     delay_seconds: float = Field(default=1.0, ge=0)
 
 
+class SafetySettingConfig(BaseModel):
+    """Per-category safety setting for generate_content_config."""
+    model_config = ConfigDict(extra="forbid")
+    category: str
+    threshold: str
+
+
+class AgentGenerateContentConfig(BaseModel):
+    """Per-agent generation parameter overrides (google.genai.types.GenerateContentConfig).
+
+    These override the model-level temperature/max_tokens at the per-agent
+    generation level. ADK forbids 'tools', 'system_instruction', and
+    'response_schema' here; set them via agent fields instead.
+    """
+    model_config = ConfigDict(extra="forbid")
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=None, ge=1)
+    max_output_tokens: Optional[int] = Field(default=None, ge=1)
+    candidate_count: Optional[int] = Field(default=None, ge=1)
+    stop_sequences: Optional[list[str]] = None
+    seed: Optional[int] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    safety_settings: Optional[list[SafetySettingConfig]] = None
+    cached_content: Optional[str] = None
+    response_mime_type: Optional[str] = None
+
+
+class AgentThinkingConfig(BaseModel):
+    """Per-agent thinking config — compiled to a BuiltInPlanner at build time.
+
+    Use this for Gemini models that support thinking_budget. This takes
+    precedence over any thinking config on the model-level ModelConfig.
+    """
+    model_config = ConfigDict(extra="forbid")
+    include_thoughts: Optional[bool] = None
+    thinking_budget: Optional[int] = Field(
+        default=None,
+        description="Token budget for thinking. 0=disabled, -1=auto, >0=explicit budget.",
+    )
+
+
 class AgentConfig(BaseModel):
     type: Literal["agent"] = "agent"
     model: str
+    description: Optional[str] = None
     instruction: Optional[str] = None
     instruction_file: Optional[str] = Field(
         default=None,
@@ -180,14 +225,27 @@ class AgentConfig(BaseModel):
             "<cwd>/prompts/my_workflow__my_agent.md"
         ),
     )
+    static_instruction: Optional[str] = None
+    static_instruction_file: Optional[str] = Field(
+        default=None,
+        description=(
+            "Dotted ref to a static prompt file (same format as instruction_file). "
+            "Content is cached by the model and never varies with state."
+        ),
+    )
     tools: list[str] = []
     skills: list[str] = []
+    input_schema: Optional[str] = None
     output_schema: Optional[str] = None
+    output_key: Optional[str] = None
     sub_agents: list[str] = []
     mode: Optional[Literal["chat", "task", "single_turn"]] = None
     include_contents: Literal["default", "none"] = "default"
     disallow_transfer_to_parent: bool = False
     disallow_transfer_to_peers: bool = False
+    parallel_worker: Optional[bool] = None
+    generate_content_config: Optional[AgentGenerateContentConfig] = None
+    thinking: Optional[AgentThinkingConfig] = None
     retry: Optional[RetryConfig] = None
 
     @model_validator(mode="after")
@@ -201,6 +259,12 @@ class AgentConfig(BaseModel):
         if not has_inline and not has_file:
             raise ValueError(
                 "One of 'instruction' or 'instruction_file' is required"
+            )
+        has_static_inline = self.static_instruction is not None
+        has_static_file = self.static_instruction_file is not None
+        if has_static_inline and has_static_file:
+            raise ValueError(
+                "Specify either 'static_instruction' or 'static_instruction_file', not both"
             )
         return self
 
@@ -233,6 +297,14 @@ class LoopConfig(BaseModel):
     )
 
 
+_DYNAMIC_TO_RE = re.compile(r"^\{\{.*\}\}$")
+
+
+def _is_dynamic_to(val: Any) -> bool:
+    """Return True if *val* is a template string like ``{{state.x.y}}``."""
+    return isinstance(val, str) and bool(_DYNAMIC_TO_RE.match(val.strip()))
+
+
 class EdgeConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     from_: str = Field(alias="from")
@@ -244,6 +316,12 @@ class EdgeConfig(BaseModel):
     on_error: bool = False
     parallel: bool = False
     join: Optional[str] = None
+    # Typed error routing: match on exception class name (exact) and/or message (regex).
+    error_type: Optional[str] = None
+    error_match: Optional[str] = None
+    # Dynamic destination: constrain which nodes the dispatcher may route to.
+    # When None and to: is a template, all workflow nodes are candidates.
+    allowed_targets: Optional[list[str]] = None
 
     @model_validator(mode="after")
     def _validate_edge(self) -> "EdgeConfig":
@@ -252,6 +330,7 @@ class EdgeConfig(BaseModel):
             self.condition = "__DEFAULT__"
 
         to_is_list = isinstance(self.to, list)
+        to_is_dynamic = not to_is_list and _is_dynamic_to(self.to)
 
         # parallel / join require to: [list]
         if self.parallel and not to_is_list:
@@ -263,21 +342,38 @@ class EdgeConfig(BaseModel):
                 "'join' requires 'to' to be a list of nodes"
             )
 
-        # loop is not compatible with list-to or on_error
+        # loop is not compatible with list-to, dynamic-to, or on_error
         if self.loop is not None:
             if to_is_list:
                 raise ValueError(
                     "'loop' is not compatible with fan-out edges (to: [list])"
+                )
+            if to_is_dynamic:
+                raise ValueError(
+                    "'loop' is not compatible with dynamic destination (to: template)"
                 )
             if self.on_error:
                 raise ValueError(
                     "'loop' and 'on_error' cannot be used on the same edge"
                 )
 
-        # on_error edges must not have conditions (they fire on failure)
-        if self.on_error and self.condition is not None:
+        # on_error edges may only carry condition: default (for explicit fallback ordering)
+        if self.on_error and self.condition is not None and self.condition != "__DEFAULT__":
             raise ValueError(
-                "'on_error: true' edges cannot have a 'condition'"
+                "'on_error: true' edges only accept 'condition: default',"
+                " not other condition types"
+            )
+
+        # error_type / error_match only valid on on_error edges
+        if not self.on_error and (self.error_type is not None or self.error_match is not None):
+            raise ValueError(
+                "'error_type' and 'error_match' are only valid on 'on_error: true' edges"
+            )
+
+        # allowed_targets only valid with a dynamic to:
+        if self.allowed_targets is not None and not to_is_dynamic:
+            raise ValueError(
+                "'allowed_targets' is only valid when 'to' is a template (dynamic destination)"
             )
 
         return self
@@ -330,8 +426,8 @@ def _detect_workflow_cycles(
     for edge in edges:
         to_targets = edge.to if isinstance(edge.to, list) else [edge.to]
         for t in to_targets:
-            # Skip intentional loop edges from cycle detection.
-            if (edge.from_, t) in loop_edges:
+            # Skip dynamic destinations and intentional loop edges.
+            if _is_dynamic_to(t) or (edge.from_, t) in loop_edges:
                 continue
             adj[edge.from_].append(t)
 
@@ -385,12 +481,21 @@ class WorkflowConfig(BaseModel):
                 )
 
             # Validate 'to' targets (str or list[str]).
+            # Dynamic (template) destinations are validated at runtime.
             to_targets = edge.to if isinstance(edge.to, list) else [edge.to]
             for t in to_targets:
-                if t not in node_set:
+                if not _is_dynamic_to(t) and t not in node_set:
                     raise ValueError(
                         f"edge 'to: {t}' references unknown node"
                     )
+
+            # Validate allowed_targets entries.
+            if edge.allowed_targets is not None:
+                for t in edge.allowed_targets:
+                    if t not in node_set:
+                        raise ValueError(
+                            f"edge 'allowed_targets: {t}' references unknown node"
+                        )
 
             # Validate join target.
             if edge.join is not None and edge.join not in node_set:
@@ -522,6 +627,15 @@ class RootConfig(BaseModel):
                     f"'{sa_name}' is declared as a sub_agent and must not appear "
                     f"in workflow.nodes"
                 )
+
+        # parallel_worker is only valid on sub-agents.
+        for agent_name, cfg in self.agents.items():
+            if isinstance(cfg, AgentConfig) and cfg.parallel_worker is not None:
+                if agent_name not in all_sub_agent_names:
+                    raise ValueError(
+                        f"agent '{agent_name}': 'parallel_worker' is only valid on "
+                        f"sub-agents (agents listed under another agent's sub_agents)"
+                    )
 
         # Detect circular sub_agent references.
         _detect_sub_agent_cycles(self.agents)

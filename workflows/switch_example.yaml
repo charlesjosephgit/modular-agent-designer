@@ -1,0 +1,53 @@
+name: switch_example
+description: >
+  Demonstrate switch/case edge sugar. A classifier agent routes incoming text
+  to one of three specialist agents based on category. The switch: form is
+  equivalent to writing individual condition: {eval: ...} edges but is more
+  concise when branching on a single state value.
+
+models:
+  llm:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+agents:
+  classifier:
+    model: llm
+    instruction: |
+      Classify the following text into exactly one category.
+      Reply with only one of these words: urgent, normal, low.
+      Text: {{state.user_input.topic}}
+
+  handle_urgent:
+    model: llm
+    instruction: |
+      You are handling an URGENT request. Summarise the issue and propose
+      immediate next steps in 2-3 sentences.
+      Request: {{state.classifier}}
+
+  handle_normal:
+    model: llm
+    instruction: |
+      Handle this standard request professionally.
+      Request: {{state.classifier}}
+
+  handle_low:
+    model: llm
+    instruction: |
+      Acknowledge this low-priority item and log it for later review.
+      Item: {{state.classifier}}
+
+workflow:
+  nodes: [classifier, handle_urgent, handle_normal, handle_low]
+  entry: classifier
+  edges:
+    # switch: evaluates state.classifier (the classifier's output) and routes
+    # to the matching case. Works identically to writing three separate
+    # condition: {eval: ...} edges.
+    - from: classifier
+      switch: "{{state.classifier}}"
+      cases:
+        urgent: handle_urgent
+        normal: handle_normal
+        low: handle_low
+      default: handle_normal

@@ -1,6 +1,6 @@
 ---
 name: mad-routing
-description: Guide to conditional edge routing, branching, eval expressions, default fallback, loop config, error routing, parallel/fan-out edges, conditional templates, and validation rules.
+description: Guide to conditional edge routing, branching, eval expressions, switch/case sugar, dynamic destination, default fallback, loop config, typed error routing, parallel/fan-out edges, conditional templates, and validation rules.
 ---
 
 # Conditional Routing Reference
@@ -113,6 +113,73 @@ edges:
 
 ---
 
+## Condition Type 6: Switch/Case Sugar
+
+When routing on a single state value, `switch:` is more concise than N separate `condition: {eval: ...}` edges. It expands at load time — the builder sees plain edges.
+
+```yaml
+edges:
+  - from: classifier
+    switch: "{{state.classifier}}"     # {{state.x.y.z}} template
+    cases:
+      urgent: handle_urgent
+      normal: handle_normal
+      low: handle_low
+    default: handle_other              # optional; same semantics as condition: default
+```
+
+The `switch:` value accepts:
+- `"{{state.x.y}}"` — state template; converted to chained `.get()` calls.
+- `{eval: "expr"}` — arbitrary Python expression; each case value becomes `(expr) == 'case_value'`.
+
+```yaml
+  - from: scorer
+    switch:
+      eval: "state.get('scorer', {}).get('label', '')"
+    cases:
+      pass: finalize
+      fail: revision
+```
+
+**Rules:**
+- `cases:` must be a non-empty mapping. Keys are compared as strings.
+- `default:` is optional — without it, unmatched output terminates the branch.
+- Each case target must be a known node in `workflow.nodes`.
+
+See [`workflows/switch_example.yaml`](../../workflows/switch_example.yaml) for a runnable example.
+
+---
+
+## Dynamic Destination
+
+When a router agent's output decides the next node by name, use a `{{state.x}}` template in `to:` instead of writing one exact-match edge per candidate:
+
+```yaml
+agents:
+  router:
+    model: llm
+    instruction: |
+      Pick a specialist: analyst, writer, or researcher.
+      Reply with exactly one word.
+
+workflow:
+  nodes: [router, analyst, writer, researcher]
+  entry: router
+  edges:
+    - from: router
+      to: "{{state.router}}"
+      allowed_targets: [analyst, writer, researcher]
+```
+
+- Any `{{state.x.y.z}}` template is accepted. Node-set validation is deferred to runtime.
+- `allowed_targets` is optional. When set, only those nodes are wired as route targets and unknown names fail at load time. When omitted, all workflow nodes are candidates.
+- If the resolved name is not among the candidates, the workflow terminates with a logged error.
+- `loop:` is not compatible with dynamic `to:`.
+
+See [`workflows/dynamic_router.yaml`](../../workflows/dynamic_router.yaml) for a runnable example.
+
+---
+
 ## Loop Config (Controlled Cycles)
 
 For review/revision loops where a node routes back to a prior node, use `loop:` to set a safety limit and an escape route:
@@ -222,23 +289,56 @@ If all retries are exhausted, error info is written to `state._error_<agent_name
 
 ## Error Routing
 
-Edges with `on_error: true` fire **only** when the source node fails (after all retries). They are mutually exclusive with `condition:`:
+Edges with `on_error: true` fire **only** when the source node fails (after all retries). When a node has both normal and `on_error` edges, the framework injects a unified error router — exactly one path fires (success or error, never both).
+
+**Basic (catch-all) error routing:**
 
 ```yaml
 edges:
-  # Normal success path
   - from: researcher
-    to: writer
+    to: writer            # success path
 
-  # Error fallback path
   - from: researcher
     to: error_handler
-    on_error: true
+    on_error: true        # fires on any error
 ```
 
-When a node has both normal and `on_error` edges, the framework injects a unified error router that routes to exactly one path — success or error, never both.
+**Typed error routing** — match on exception class name and/or message pattern. Evaluated in declaration order; `condition: default` always last:
 
-The error info in state (`state._error_<agent_name>`) is a dict:
+```yaml
+edges:
+  - from: api_caller
+    to: success_handler
+
+  - from: api_caller
+    to: timeout_handler
+    on_error: true
+    error_type: TimeoutError         # exact match on exception class name
+
+  - from: api_caller
+    to: rate_limit_handler
+    on_error: true
+    error_match: "rate.?limit"       # Python regex matched against the error message
+
+  - from: api_caller
+    to: generic_error_handler
+    on_error: true
+    condition: default               # catch-all fallback; always evaluated last
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `on_error` | bool | `false` | Route only on failure (after all retries) |
+| `error_type` | string | `null` | Exact match on exception class name |
+| `error_match` | string | `null` | Python `re.search` pattern on the error message |
+| `condition: default` | — | — | Catch-all fallback among `on_error` edges |
+
+- When both `error_type` and `error_match` are set, **both** must match.
+- An edge with neither is a wildcard that catches any error (backward-compatible with old behavior).
+- `condition: default` is the only `condition` allowed on `on_error` edges.
+- If no typed edge matches and there is no default, the workflow terminates with a logged warning.
+
+The error info in state (`state._error_<agent_name>`):
 ```json
 {
   "error_type": "TimeoutError",
@@ -246,6 +346,8 @@ The error info in state (`state._error_<agent_name>`) is a dict:
   "attempts": 4
 }
 ```
+
+See [`workflows/typed_errors.yaml`](../../workflows/typed_errors.yaml) for a runnable example.
 
 ---
 
@@ -358,6 +460,11 @@ Enforced at YAML load time (not at runtime):
 1. **At most one `default` edge per source node.** Multiple defaults → Pydantic error.
 2. **Cannot mix unconditional and conditional edges from the same source.** Choose one type per source.
 3. **Accidental cycles are rejected.** Any edge forming a cycle must have a `loop:` config. Without it, the loader raises a `ValueError` naming the cycle path.
+4. **`switch:` requires a non-empty `cases:` mapping.** Each case target must be in `workflow.nodes`.
+5. **`allowed_targets` requires a dynamic `to:` template.** Setting it on a literal `to:` is a Pydantic error.
+6. **`error_type` / `error_match` require `on_error: true`.** Using them on normal edges is a Pydantic error.
+7. **`on_error` edges only accept `condition: default`**, not other condition types.
+8. **`loop:` is incompatible with dynamic `to:` templates.**
 
 ```yaml
 # INVALID — mixing unconditional + conditional from the same source
@@ -390,6 +497,10 @@ edges:
 | Assuming `default` is checked in YAML order | It is always last regardless of order | This is correct — `default` is always the final fallback |
 | Two `default` edges from the same source | Pydantic error at load time | Keep exactly one `default` per source |
 | Cycle without `loop:` config | `ValueError` at load time: "Accidental cycle detected" | Add `loop: { max_iterations: N }` to the edge |
-| `on_error: true` with a `condition:` | `ValueError` at load time | Error edges cannot have conditions — remove one |
+| `on_error: true` with a non-default `condition:` | `ValueError` at load time | Only `condition: default` is allowed on error edges |
 | `loop:` on a fan-out edge (`to: [list]`) | `ValueError` at load time | Loop is not compatible with parallel fan-out |
+| `loop:` on a dynamic `to:` template | `ValueError` at load time | Loop is not compatible with dynamic destinations |
 | `{{state.x}}` in a loop where `x` doesn't exist on first pass | `StateReferenceError` on the first iteration | Wrap in `{{#if state.x}}…{{/if}}` |
+| `switch:` with a plain string (not a template) | `ValueError` at load time | Use `"{{state.x}}"` or `{eval: "expr"}` |
+| Dynamic `to:` resolves to a node not in `allowed_targets` | Workflow terminates with logged error | Set `allowed_targets` to the full candidate list, or remove to allow all nodes |
+| `error_type` / `error_match` on a non-`on_error` edge | `ValueError` at load time | These fields are only valid with `on_error: true` |

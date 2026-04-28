@@ -17,7 +17,9 @@ from ..config.schema import (
     LoopConfig,
     NodeRefConfig,
     RootConfig,
+    _is_dynamic_to,
 )
+from ..state.template import resolve as resolve_template
 from ..models.registry import build_model_registry
 from ..nodes.agent_node import build_agent_node, build_sub_agent
 from ..nodes.custom import build_custom_node
@@ -66,9 +68,39 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     # and inject join-barrier nodes where needed.
     expanded_edges = _expand_list_edges(cfg.workflow.edges, node_callables)
 
+    # Wire dynamic destination edges (to: template) separately.
+    # Each gets a dispatcher node injected between src and all candidate nodes.
+    all_workflow_node_names = list(node_callables.keys())
+    static_edges: list[EdgeConfig] = []
+    for edge_cfg in expanded_edges:
+        if isinstance(edge_cfg.to, str) and _is_dynamic_to(edge_cfg.to):
+            src_node = node_callables[edge_cfg.from_]
+            candidate_names = (
+                edge_cfg.allowed_targets
+                if edge_cfg.allowed_targets is not None
+                else all_workflow_node_names
+            )
+            dispatch_node = _build_dispatch_node(
+                edge_cfg.from_, edge_cfg.to, candidate_names
+            )
+            dispatch_key = f"_dispatch_{edge_cfg.from_}"
+            node_callables[dispatch_key] = dispatch_node
+            adk_edges.append(Edge(from_node=src_node, to_node=dispatch_node))
+            for cand_name in candidate_names:
+                if cand_name in node_callables:
+                    adk_edges.append(
+                        Edge(
+                            from_node=dispatch_node,
+                            to_node=node_callables[cand_name],
+                            route=cand_name,
+                        )
+                    )
+        else:
+            static_edges.append(edge_cfg)
+
     # Separate on_error edges from normal edges.
-    normal_edges = [e for e in expanded_edges if not e.on_error]
-    error_edges = [e for e in expanded_edges if e.on_error]
+    normal_edges = [e for e in static_edges if not e.on_error]
+    error_edges = [e for e in static_edges if e.on_error]
 
     # Identify sources that have on_error edges — these need unified routing.
     error_src_names: set[str] = {e.from_ for e in error_edges}
@@ -103,11 +135,22 @@ def build_workflow(cfg: RootConfig) -> Workflow:
                 if edge_cfg.loop is not None:
                     loop_configs[i] = edge_cfg.loop
 
-            # Build a map of destination name → route label for dedup.
+            # Build a map of destination name → canonical route label.
+            # First occurrence wins so that when multiple conditions share a
+            # target (e.g. a case AND the default both point to the same node),
+            # all conditions emit the same route and only one ADK edge is added.
             dst_to_route: dict[str, str] = {}
             for i, edge_cfg in enumerate(conditional):
                 assert isinstance(edge_cfg.to, str)
-                dst_to_route[edge_cfg.to] = f"_route_{i}"
+                if edge_cfg.to not in dst_to_route:
+                    dst_to_route[edge_cfg.to] = f"_route_{i}"
+
+            # Map every edge index to the canonical route for its destination.
+            idx_to_route: dict[int, str] = {
+                i: dst_to_route[edge_cfg.to]
+                for i, edge_cfg in enumerate(conditional)
+                if isinstance(edge_cfg.to, str)
+            }
 
             exhausted_route_map: dict[int, str] = {}
             for i, loop_cfg in loop_configs.items():
@@ -119,14 +162,20 @@ def build_workflow(cfg: RootConfig) -> Workflow:
 
             router = _build_router_node(
                 src_name, conditional, loop_configs, exhausted_route_map,
+                idx_to_route,
             )
             adk_edges.append(Edge(from_node=src_node, to_node=router))
 
+            # Add one ADK edge per unique destination (dedup by target node).
+            seen_dsts: set[str] = set()
             for i, edge_cfg in enumerate(conditional):
                 assert isinstance(edge_cfg.to, str)
+                if edge_cfg.to in seen_dsts:
+                    continue
+                seen_dsts.add(edge_cfg.to)
                 dst = node_callables[edge_cfg.to]
                 adk_edges.append(
-                    Edge(from_node=router, to_node=dst, route=f"_route_{i}")
+                    Edge(from_node=router, to_node=dst, route=idx_to_route[i])
                 )
 
             for i, route_label in exhausted_route_map.items():
@@ -279,11 +328,61 @@ def _build_join_node(
     return adk_node()(_join)
 
 
+def _build_dispatch_node(
+    src_name: str,
+    to_template: str,
+    candidate_names: list[str],
+) -> Any:
+    """Build a @node that resolves a template destination from state at runtime.
+
+    Reads ``to_template`` (e.g. ``{{state.router.next_node}}``) from state,
+    validates the resolved name is among *candidate_names*, and yields
+    ``AdkEvent(route=resolved_name)``.  The caller wires one ``Edge`` per
+    candidate so ADK can route to it.
+    """
+    node_name = f"_dispatch_{src_name}"
+
+    async def _dispatch(ctx: Any, node_input: Any):
+        state_dict = (
+            ctx.state.to_dict()
+            if hasattr(ctx.state, "to_dict")
+            else dict(ctx.state)
+        )
+        try:
+            destination = resolve_template(to_template, state_dict)
+        except Exception as exc:
+            logger.error(
+                "dispatch '%s': failed to resolve template %r: %s",
+                src_name, to_template, exc,
+            )
+            return
+
+        if destination not in candidate_names:
+            logger.error(
+                "dispatch '%s': resolved destination %r is not a known node "
+                "(candidates: %s) — workflow terminates",
+                src_name, destination, candidate_names,
+            )
+            return
+
+        logger.info(
+            "dispatch '%s': resolved %r → '%s'",
+            src_name, to_template, destination,
+        )
+        yield AdkEvent(route=destination, output=destination)
+
+    _dispatch.__name__ = node_name
+    _dispatch.__qualname__ = node_name
+
+    return adk_node()(_dispatch)
+
+
 def _build_router_node(
     src_name: str,
     conditional_edges: list,
     loop_configs: dict[int, LoopConfig] | None = None,
     exhausted_route_map: dict[int, str] | None = None,
+    idx_to_route: dict[int, str] | None = None,
 ) -> Any:
     """Build a @node that evaluates edge conditions and emits Event(route=...).
 
@@ -300,6 +399,8 @@ def _build_router_node(
         loop_configs = {}
     if exhausted_route_map is None:
         exhausted_route_map = {}
+    if idx_to_route is None:
+        idx_to_route = {i: f"_route_{i}" for i in range(len(conditional_edges))}
 
     # Separate default (fallback) from non-default conditions.
     # Default is always checked last.
@@ -359,31 +460,31 @@ def _build_router_node(
 
                     # Increment the iteration counter.
                     logger.info(
-                        "router '%s': loop iteration %d/%d → route _route_%d",
+                        "router '%s': loop iteration %d/%d → route %s",
                         src_name, current_iter + 1,
-                        loop_cfg.max_iterations, idx,
+                        loop_cfg.max_iterations, idx_to_route[idx],
                     )
                     yield AdkEvent(
-                        route=f"_route_{idx}",
+                        route=idx_to_route[idx],
                         output=raw_output,
                         state={iter_key: current_iter + 1},
                     )
                     return
 
                 logger.info(
-                    "router '%s': matched condition %r → route _route_%d",
-                    src_name, condition, idx,
+                    "router '%s': matched condition %r → route %s",
+                    src_name, condition, idx_to_route[idx],
                 )
-                yield AdkEvent(route=f"_route_{idx}", output=raw_output)
+                yield AdkEvent(route=idx_to_route[idx], output=raw_output)
                 return
 
         # Fall back to default if nothing matched.
         if default_idx is not None:
             logger.info(
-                "router '%s': no condition matched → default route _route_%d",
-                src_name, default_idx,
+                "router '%s': no condition matched → default route %s",
+                src_name, idx_to_route[default_idx],
             )
-            yield AdkEvent(route=f"_route_{default_idx}", output=raw_output)
+            yield AdkEvent(route=idx_to_route[default_idx], output=raw_output)
         else:
             logger.info(
                 "router '%s': no condition matched and no default — workflow terminates",
@@ -396,6 +497,20 @@ def _build_router_node(
     return adk_node()(_router)
 
 
+def _error_edge_matches(edge: EdgeConfig, err_type: str, err_msg: str) -> bool:
+    """Return True if *edge* should fire for the given error type and message.
+
+    An edge with neither ``error_type`` nor ``error_match`` is a wildcard that
+    matches any error. ``condition: "__DEFAULT__"`` edges are excluded here
+    (they are handled separately as the fallback).
+    """
+    if edge.condition == "__DEFAULT__":
+        return False
+    type_ok = edge.error_type is None or edge.error_type == err_type
+    match_ok = edge.error_match is None or bool(re.search(edge.error_match, err_msg))
+    return type_ok and match_ok
+
+
 def _build_unified_error_router(
     src_name: str,
     normal_edges: list[EdgeConfig],
@@ -403,14 +518,21 @@ def _build_unified_error_router(
 ) -> Any:
     """Build a @node that routes to success OR error handlers.
 
-    Checks for an error marker in state (``_error_{src_name}``) written by the
-    retry wrapper in agent_node.py:
-    - If error exists → routes to error handlers via ``_error_N``
-    - If no error → routes to normal handlers via ``_ok_N``
+    On error, iterates error_edges in declaration order and picks the first
+    edge whose ``error_type`` / ``error_match`` criteria are satisfied.
+    An edge with neither field is a wildcard that matches any error.
+    ``condition: default`` edges are evaluated last regardless of order.
 
-    This ensures that when a node has both normal and on_error edges,
-    only ONE path fires (not both).
+    On success, routes to normal handlers via ``_ok_N``.
     """
+    # Separate default error edge (condition == __DEFAULT__) from typed/wildcard ones.
+    typed_error_edges: list[tuple[int, EdgeConfig]] = []
+    default_error_idx: int | None = None
+    for i, edge in enumerate(error_edges):
+        if edge.condition == "__DEFAULT__":
+            default_error_idx = i
+        else:
+            typed_error_edges.append((i, edge))
 
     async def _error_router(ctx: Any, node_input: Any):
         state_dict = (
@@ -422,11 +544,33 @@ def _build_unified_error_router(
         error_info = state_dict.get(error_key)
 
         if error_info is not None:
-            logger.info(
-                "error_router '%s': error detected → routing to error handler",
-                src_name,
+            is_dict = isinstance(error_info, dict)
+            err_type = error_info.get("error_type", "") if is_dict else ""
+            err_msg = error_info.get("error_message", "") if is_dict else str(error_info)
+
+            # Try typed/wildcard error edges in declaration order.
+            for idx, edge in typed_error_edges:
+                if _error_edge_matches(edge, err_type, err_msg):
+                    logger.info(
+                        "error_router '%s': error '%s' matched edge %d → _error_%d",
+                        src_name, err_type, idx, idx,
+                    )
+                    yield AdkEvent(route=f"_error_{idx}", output=str(error_info))
+                    return
+
+            # Fall back to default error edge if present.
+            if default_error_idx is not None:
+                logger.info(
+                    "error_router '%s': no typed match → default error edge _error_%d",
+                    src_name, default_error_idx,
+                )
+                yield AdkEvent(route=f"_error_{default_error_idx}", output=str(error_info))
+                return
+
+            logger.warning(
+                "error_router '%s': error '%s' matched no error edge — workflow terminates",
+                src_name, err_type,
             )
-            yield AdkEvent(route="_error_0", output=str(error_info))
         else:
             logger.info(
                 "error_router '%s': no error → routing to success handler",
@@ -521,8 +665,6 @@ def _build_node_callables(
     tool_registry: dict,
     skill_registry: dict,
 ) -> dict[str, Any]:
-    workflow_node_names = set(cfg.workflow.nodes)
-
     # Collect all names that appear as sub-agents.
     all_sub_agent_names: set[str] = set()
     for agent_cfg in cfg.agents.values():

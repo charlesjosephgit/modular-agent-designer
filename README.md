@@ -125,12 +125,36 @@ tools:
 agents:
   <agent_name>:
     model: <model_alias>          # reference to models section
+    description: "What this agent does"  # optional; used by parent LLM to choose sub-agents
     instruction: |               # inline prompt (use for short, simple prompts)
       Template text with {{state.key}} or {{state.nested.key}} refs.
     # -- OR --
     instruction_file: prompts.my_agent  # dotted ref → <cwd>/prompts/my_agent.md
+    static_instruction: |        # optional; never changes — eligible for prompt caching
+      You are a helpful assistant.
+    # -- OR --
+    static_instruction_file: prompts.my_agent_system  # same dotted-ref format
     tools: [tool_alias, ...]      # optional; references to tools section
-    output_schema: pkg.Module.Class  # optional; Pydantic v2 class
+    input_schema: pkg.module.MyModel   # optional; Pydantic BaseModel for agent-as-tool input
+    output_schema: pkg.Module.Class    # optional; Pydantic v2 class for structured output
+    output_key: custom_result     # optional; state key to write output (default: agent name)
+    generate_content_config:      # optional; per-agent generation overrides
+      temperature: 0.2            # 0.0–2.0
+      top_p: 0.9                  # 0.0–1.0
+      top_k: 40
+      max_output_tokens: 1024
+      candidate_count: 1
+      stop_sequences: ["---"]
+      seed: 42
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+      response_mime_type: "application/json"  # or "text/plain"
+      safety_settings:
+        - category: HARM_CATEGORY_HARASSMENT
+          threshold: BLOCK_NONE
+    thinking:                     # optional; enables BuiltInPlanner (Gemini only)
+      thinking_budget: 2048       # tokens: 0=disabled, -1=auto, >0=explicit budget
+      include_thoughts: false     # include reasoning tokens in response
     retry:                        # optional; retry on error
       max_retries: 3              # 1–10, default 3
       backoff: fixed              # fixed | exponential
@@ -162,6 +186,24 @@ workflow:
     - from: agent_a
       to: error_handler
       on_error: true                   # optional: fire only if agent_a fails all retries
+    - from: agent_a
+      to: timeout_handler
+      on_error: true
+      error_type: TimeoutError         # optional: match a specific exception class name
+    - from: agent_a
+      to: fallback_handler
+      on_error: true
+      error_match: "rate.?limit"       # optional: regex match on error message
+      condition: default               # optional: default fallback among error edges
+    - from: router_agent
+      to: "{{state.router_agent}}"     # dynamic destination — resolved from state at runtime
+      allowed_targets: [node_a, node_b] # optional: restrict candidate nodes
+    - from: classifier
+      switch: "{{state.classifier}}"   # switch/case sugar — expands to N eval-condition edges
+      cases:
+        urgent: handle_urgent
+        normal: handle_normal
+      default: handle_other
   entry: agent_a                       # first node to run
 ```
 
@@ -235,6 +277,61 @@ The loader enforces these rules at parse time (before any workflow runs):
 - A source node may not mix unconditional edges (no `condition`) with conditional edges — choose one type per source.
 - Edges that form a cycle **must** have a `loop:` config — accidental cycles without `loop:` are rejected at load time with a clear error message.
 
+### Switch/Case Sugar
+
+For branching on a single state value, the `switch:` form is more concise than writing N separate `condition: {eval: ...}` edges:
+
+```yaml
+edges:
+  - from: classifier
+    switch: "{{state.classifier}}"       # state template: {{state.x.y.z}}
+    cases:
+      urgent: handle_urgent
+      normal: handle_normal
+      low: handle_low
+    default: handle_other                # optional catch-all
+```
+
+This expands at load time into standard `condition: {eval: ...}` edges — the builder sees plain edges. The `switch:` value can be a `{{state.x.y}}` template or an `{eval: "expr"}` block:
+
+```yaml
+  - from: scorer
+    switch:
+      eval: "state.get('scorer', {}).get('score', 0) > 0.8"
+    cases:
+      "True": high_quality
+      "False": low_quality
+```
+
+See [`workflows/switch_example.yaml`](workflows/switch_example.yaml) for a runnable example.
+
+### Dynamic Destination
+
+When a router agent's output determines the next node by name, use a template in `to:` instead of writing one exact-match edge per candidate:
+
+```yaml
+agents:
+  router:
+    model: llm
+    instruction: |
+      Pick a specialist: analyst, writer, or researcher.
+      Reply with exactly one word.
+
+workflow:
+  nodes: [router, analyst, writer, researcher]
+  entry: router
+  edges:
+    - from: router
+      to: "{{state.router}}"               # resolved from state at runtime
+      allowed_targets: [analyst, writer, researcher]   # documents + constrains candidates
+```
+
+- `to:` accepts any `{{state.x.y}}` template string. Node-set validation is skipped at load time; the resolved name is validated at runtime.
+- `allowed_targets` is optional — when omitted, all workflow nodes are candidates. When provided, only those nodes are wired as route targets and unknown names fail validation at load time.
+- If the template resolves to a name that isn't among the candidates, the workflow terminates with a logged error.
+
+See [`workflows/dynamic_router.yaml`](workflows/dynamic_router.yaml) for a runnable example.
+
 ### Loop Config (Controlled Cycles)
 
 For review/revision loops where a node routes back to a prior node, use `loop:` to set a safety limit and an optional escape route:
@@ -289,23 +386,52 @@ If all retries are exhausted, the error info is written to `state._error_<agent_
 
 ### Error Routing
 
-Edges with `on_error: true` fire **only** when the source node fails (after exhausting all retries). They are mutually exclusive with `condition:`:
+Edges with `on_error: true` fire **only** when the source node fails (after exhausting all retries). When a node has both normal and `on_error` edges, the framework injects a unified error router — only one path fires (success or error, never both).
+
+**Basic error routing:**
+```yaml
+edges:
+  - from: researcher
+    to: writer            # success path
+
+  - from: researcher
+    to: error_handler
+    on_error: true        # fires on any error
+```
+
+**Typed error routing** — match on exception class name (`error_type`) and/or a regex on the error message (`error_match`). Edges are evaluated in declaration order; `condition: default` forces last:
 
 ```yaml
 edges:
-  # Normal success path
-  - from: researcher
-    to: writer
+  - from: api_caller
+    to: success_handler
 
-  # Error fallback path
-  - from: researcher
-    to: error_handler
+  - from: api_caller
+    to: timeout_handler
     on_error: true
+    error_type: TimeoutError         # exact match on exception class name
+
+  - from: api_caller
+    to: rate_limit_handler
+    on_error: true
+    error_match: "rate.?limit"       # regex match on error message
+
+  - from: api_caller
+    to: generic_error_handler
+    on_error: true
+    condition: default               # catch-all fallback among error edges
 ```
 
-When a node has both normal and `on_error` edges, the framework injects a unified error router that checks for error state and routes to exactly one path — either the success handler or the error handler, never both.
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `on_error` | bool | `false` | Route only on failure (after all retries) |
+| `error_type` | string | `null` | Exact match on exception class name (e.g. `TimeoutError`) |
+| `error_match` | string | `null` | Regex pattern matched against the error message |
+| `condition: default` | — | — | Catch-all fallback; evaluated last regardless of declaration order |
 
-The error info available in state (`state._error_<agent_name>`) is a dict:
+When both `error_type` and `error_match` are set on one edge, **both** must match. An edge with neither is a wildcard that catches any error (original behavior — backwards-compatible). If no typed edge matches and there is no `condition: default`, the workflow terminates with a logged warning.
+
+The error info in state (`state._error_<agent_name>`):
 ```json
 {
   "error_type": "TimeoutError",
@@ -313,6 +439,8 @@ The error info available in state (`state._error_<agent_name>`) is a dict:
   "attempts": 4
 }
 ```
+
+See [`workflows/typed_errors.yaml`](workflows/typed_errors.yaml) for a runnable example.
 
 ### Parallel / Fan-Out Edges
 
@@ -356,8 +484,10 @@ Sub-agents are declared under the parent in the `agents` block and are **not** l
 |---|---|---|---|
 | `sub_agents` | `list[str]` | `[]` | Names of agents to register as sub-agents of this agent |
 | `mode` | `chat \| task \| single_turn \| null` | `null` | How the sub-agent is exposed to the parent LLM |
+| `description` | `str \| null` | `null` | Shown to the parent LLM to decide delegation — **strongly recommended for sub-agents** |
 | `disallow_transfer_to_parent` | `bool` | `false` | Prevent the sub-agent from transferring back to parent |
 | `disallow_transfer_to_peers` | `bool` | `false` | Prevent the sub-agent from transferring to sibling agents |
+| `parallel_worker` | `bool \| null` | `null` | Sub-agents only — allows parent to invoke multiple specialists concurrently |
 
 **Modes:**
 - `single_turn` — sub-agent is wrapped as a callable tool; invoked once and returns a result immediately. Best for specialist tasks.
@@ -370,20 +500,26 @@ Sub-agents are declared under the parent in the `agents` block and are **not** l
 agents:
   search_specialist:
     model: smart_model
+    description: "Retrieves factual information about a topic from the web."
     instruction: "Search for factual information on the given topic."
     mode: single_turn           # exposed as a callable tool to the parent
+    parallel_worker: true       # may run concurrently with sibling specialists
 
   analysis_specialist:
     model: smart_model
+    description: "Identifies themes and insights from a body of text."
     instruction: "Identify the three most important themes from the findings."
     mode: single_turn
+    parallel_worker: true
 
   coordinator:
     model: smart_model
+    static_instruction: "You are a research coordinator. Be decisive and concise."
     instruction: |
       You coordinate research about: {{state.user_input.topic}}.
       Delegate to search_specialist for facts, then analysis_specialist for themes.
       Synthesize a final 200-word brief.
+    output_key: final_brief     # write result to state["final_brief"]
     sub_agents:
       - search_specialist
       - analysis_specialist
@@ -401,6 +537,107 @@ workflow:
 - Sub-agent instructions are **static** — `{{state.x}}` templates are not resolved (only the parent's instruction supports templating).
 - Circular sub-agent references (A→B→A) are rejected at load time.
 - Nested sub-agents are supported: a sub-agent can itself have sub-agents. Build order is resolved automatically.
+- `parallel_worker` is only valid on sub-agents; setting it on a workflow node raises a validation error.
+
+---
+
+## ADK 2.0 Agent Efficiency & Flexibility Params
+
+These params expose additional ADK 2.0 `LlmAgent` knobs directly in YAML.
+
+### `static_instruction` — prompt caching
+
+Content that never changes across turns. ADK moves this to a cacheable position in the request, reducing latency and cost on repeated invocations.
+
+```yaml
+agents:
+  analyst:
+    model: my_model
+    static_instruction: |
+      You are a senior data analyst. Follow these rules strictly:
+      1. Always cite sources.
+      2. Use bullet points for findings.
+    instruction: "Analyse the data in {{state.analyst_input}}."
+    # -- OR load from a file --
+    # static_instruction_file: prompts.analyst_system
+```
+
+### `generate_content_config` — per-agent generation control
+
+Override temperature, token limits, safety settings, and more on a per-agent basis. These take effect at the model-call level and override any model-level `temperature`/`max_tokens` set on the shared `ModelConfig`.
+
+```yaml
+agents:
+  deterministic_agent:
+    model: my_model
+    instruction: "Extract structured data."
+    generate_content_config:
+      temperature: 0.0          # fully deterministic
+      max_output_tokens: 512
+      seed: 42
+      response_mime_type: "application/json"
+      stop_sequences: ["---END---"]
+      safety_settings:
+        - category: HARM_CATEGORY_DANGEROUS_CONTENT
+          threshold: BLOCK_NONE
+
+  creative_agent:
+    model: my_model
+    instruction: "Write a short story."
+    generate_content_config:
+      temperature: 1.2
+      top_p: 0.95
+      presence_penalty: 0.3
+```
+
+Valid `category` values (from `google.genai.types.HarmCategory`): `HARM_CATEGORY_HARASSMENT`, `HARM_CATEGORY_HATE_SPEECH`, `HARM_CATEGORY_SEXUALLY_EXPLICIT`, `HARM_CATEGORY_DANGEROUS_CONTENT`, etc.
+
+Valid `threshold` values: `BLOCK_NONE`, `BLOCK_ONLY_HIGH`, `BLOCK_MEDIUM_AND_ABOVE`, `BLOCK_LOW_AND_ABOVE`, `OFF`.
+
+### `thinking` — per-agent BuiltInPlanner (Gemini 2.5+)
+
+Enables ADK's `BuiltInPlanner` with a Gemini thinking budget. This controls how many tokens Gemini spends on internal reasoning before producing its response.
+
+```yaml
+agents:
+  reasoning_agent:
+    model: gemini_model
+    instruction: "Solve this multi-step problem: {{state.problem}}"
+    thinking:
+      thinking_budget: 2048     # 0=disabled, -1=auto, >0=explicit token budget
+      include_thoughts: false   # true to surface reasoning in the response
+```
+
+> **Note:** `thinking` applies only to Gemini models that support thinking (e.g. `gemini-2.5-flash`). For Anthropic extended-thinking or OpenAI reasoning_effort, use the model-level `thinking:` config on `ModelConfig`.
+
+### `input_schema` — typed agent-as-tool input
+
+When a sub-agent is invoked as a tool by its parent, `input_schema` constrains what the parent LLM can pass in.
+
+```yaml
+agents:
+  typed_specialist:
+    model: my_model
+    instruction: "Process the query."
+    mode: single_turn
+    input_schema: mypackage.schemas.SearchInput  # dotted import path to a Pydantic BaseModel
+```
+
+### `output_key` — custom state key
+
+By default, a workflow agent's output is written to `state[agent_name]`. Override with `output_key` to use a different key:
+
+```yaml
+agents:
+  summariser:
+    model: my_model
+    instruction: "Summarise {{state.raw_text}}."
+    output_key: summary         # downstream agents read state["summary"]
+```
+
+### Full example
+
+See [`workflows/agent_overrides.yaml`](workflows/agent_overrides.yaml) for a complete workflow demonstrating all new params together.
 
 ---
 
@@ -922,7 +1159,7 @@ export OPENAI_API_KEY=sk-...
 - **State injection**: Initial state from `--input` is set via `InMemorySessionService.create_session(state={"user_input": ...})` before the workflow runs
 - **Template timing**: `{{state.x.y}}` is resolved at node execution time (not workflow construction time) using `ctx.state.to_dict()`. Conditional blocks `{{#if state.key}}…{{/if}}` are resolved first, then value templates.
 - **AgentNode wrapper**: Each YAML agent becomes a `@node(rerun_on_resume=True)` async generator — required by ADK when calling `ctx.run_node()`. Optionally wrapped in a retry loop when `retry:` config is set.
-- **Branching**: Supports literal matching, list-based OR logic, `eval` expressions, and `default` catch-alls.
+- **Branching**: Supports literal matching, list-based OR logic, `eval` expressions, `default` catch-alls, `switch/case` sugar (expanded at load time), and dynamic destinations (`to: "{{state.x}}"` resolved at runtime).
 - **Loops**: Controlled via `loop:` config on edges. Iteration counters are tracked in state (`_loop_<from>_<to>_iter`). Accidental cycles (without `loop:`) are rejected at load time.
-- **Error routing**: `on_error: true` edges fire only when a node fails (after all retries). A unified error router ensures exactly one path fires (success or error).
+- **Error routing**: `on_error: true` edges fire only when a node fails (after all retries). Supports typed matching via `error_type` (exact exception class) and `error_match` (regex on message). A unified error router ensures exactly one path fires (success or error).
 - **Parallel / Fan-out**: `to: [list]` with `parallel: true` dispatches to multiple nodes. An auto-generated join node (when `join:` is set) waits for all fan-out targets before continuing.

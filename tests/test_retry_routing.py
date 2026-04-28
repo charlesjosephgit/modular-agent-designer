@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from modular_agent_designer.config.loader import load_workflow
 from modular_agent_designer.config.schema import RetryConfig
 from modular_agent_designer.nodes.agent_node import _compute_retry_delay
-from modular_agent_designer.workflow.builder import build_workflow
+from modular_agent_designer.workflow.builder import _error_edge_matches, build_workflow
 
 
 def _load(tmp_path: Path, content: str):
@@ -201,3 +201,200 @@ def test_on_error_edge_creates_error_router(tmp_path: Path):
     # Edges: START→caller, caller→success, caller→error_router, error_router→error
     routes = [e.route for e in wf.edges if e.route is not None]
     assert "_error_0" in routes
+
+
+# ---------------------------------------------------------------------------
+# Typed error routing: schema validation
+# ---------------------------------------------------------------------------
+
+
+def test_on_error_condition_default_is_valid(tmp_path: Path):
+    """on_error edges may carry condition: default for explicit fallback ordering."""
+    content = textwrap.dedent("""\
+        name: typed_err
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          a: {model: m, instruction: a}
+          b: {model: m, instruction: b}
+        workflow:
+          nodes: [a, b]
+          edges:
+            - from: a
+              to: b
+              on_error: true
+              condition: default
+          entry: a
+    """)
+    cfg = _load(tmp_path, content)
+    assert cfg.workflow.edges[0].on_error is True
+
+
+def test_on_error_non_default_condition_raises(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: bad
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          a: {model: m, instruction: a}
+          b: {model: m, instruction: b}
+        workflow:
+          nodes: [a, b]
+          edges:
+            - from: a
+              to: b
+              on_error: true
+              condition: "some_value"
+          entry: a
+    """)
+    with pytest.raises((ValidationError, ValueError), match="on_error"):
+        _load(tmp_path, content)
+
+
+def test_error_type_on_non_error_edge_raises(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: bad
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          a: {model: m, instruction: a}
+          b: {model: m, instruction: b}
+        workflow:
+          nodes: [a, b]
+          edges:
+            - from: a
+              to: b
+              error_type: TimeoutError
+          entry: a
+    """)
+    with pytest.raises((ValidationError, ValueError), match="error_type"):
+        _load(tmp_path, content)
+
+
+def test_typed_error_routing_builds(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: typed_err
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call, retry: {max_retries: 1}}
+          success: {model: m, instruction: success}
+          handle_timeout: {model: m, instruction: timeout}
+          handle_other: {model: m, instruction: other}
+        workflow:
+          nodes: [caller, success, handle_timeout, handle_other]
+          edges:
+            - from: caller
+              to: success
+            - from: caller
+              to: handle_timeout
+              on_error: true
+              error_type: TimeoutError
+            - from: caller
+              to: handle_other
+              on_error: true
+              condition: default
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+    routes = [e.route for e in wf.edges if e.route is not None]
+    assert "_error_0" in routes
+    assert "_error_1" in routes
+
+
+# ---------------------------------------------------------------------------
+# Typed error routing: _error_edge_matches unit tests
+# ---------------------------------------------------------------------------
+
+
+def _make_error_edge(to, error_type=None, error_match=None, condition=None):
+    from modular_agent_designer.config.schema import EdgeConfig
+    kwargs = {"from": "src", "to": to, "on_error": True}
+    if error_type is not None:
+        kwargs["error_type"] = error_type
+    if error_match is not None:
+        kwargs["error_match"] = error_match
+    if condition is not None:
+        kwargs["condition"] = condition
+    return EdgeConfig(**kwargs)
+
+
+def test_untyped_edge_matches_any_error():
+    edge = _make_error_edge("handler")
+    assert _error_edge_matches(edge, "ValueError", "oops") is True
+    assert _error_edge_matches(edge, "TimeoutError", "timed out") is True
+
+
+def test_typed_error_type_match():
+    edge = _make_error_edge("handler", error_type="TimeoutError")
+    assert _error_edge_matches(edge, "TimeoutError", "timed out") is True
+    assert _error_edge_matches(edge, "ValueError", "bad value") is False
+
+
+def test_typed_error_match_regex():
+    edge = _make_error_edge("handler", error_match=r"rate.?limit")
+    assert _error_edge_matches(edge, "HTTPError", "rate limit exceeded") is True
+    assert _error_edge_matches(edge, "HTTPError", "server error") is False
+
+
+def test_both_error_type_and_match_must_satisfy():
+    edge = _make_error_edge("handler", error_type="TimeoutError", error_match=r"connect")
+    assert _error_edge_matches(edge, "TimeoutError", "connect timed out") is True
+    assert _error_edge_matches(edge, "TimeoutError", "disk full") is False
+    assert _error_edge_matches(edge, "ValueError", "connect refused") is False
+
+
+def test_default_edge_never_matches_via_helper():
+    edge = _make_error_edge("fallback", condition="default")
+    # Default edges are excluded from _error_edge_matches (handled as fallback separately)
+    assert _error_edge_matches(edge, "ValueError", "anything") is False
+
+
+def test_typed_error_routing_routes_are_distinct(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: typed_err2
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call, retry: {max_retries: 1}}
+          success: {model: m, instruction: success}
+          handle_timeout: {model: m, instruction: timeout}
+          handle_rate: {model: m, instruction: rate}
+          handle_other: {model: m, instruction: other}
+        workflow:
+          nodes: [caller, success, handle_timeout, handle_rate, handle_other]
+          edges:
+            - from: caller
+              to: success
+            - from: caller
+              to: handle_timeout
+              on_error: true
+              error_type: TimeoutError
+            - from: caller
+              to: handle_rate
+              on_error: true
+              error_match: "rate.?limit"
+            - from: caller
+              to: handle_other
+              on_error: true
+              condition: default
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+    routes = [e.route for e in wf.edges if e.route is not None]
+    # 3 error edges → _error_0, _error_1, _error_2
+    assert "_error_0" in routes
+    assert "_error_1" in routes
+    assert "_error_2" in routes

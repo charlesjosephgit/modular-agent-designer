@@ -1,0 +1,47 @@
+name: dynamic_router
+description: >
+  Demonstrate dynamic destination routing (to: "{{state.x}}"). A router agent
+  decides the next node by name, and the framework resolves that name at
+  runtime. Use allowed_targets to document and constrain the valid targets.
+
+models:
+  llm:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+agents:
+  router:
+    model: llm
+    instruction: |
+      Decide which specialist to route this request to.
+      Reply with exactly one of: analyst, writer, researcher
+      Request: {{state.user_input.topic}}
+
+  analyst:
+    model: llm
+    instruction: |
+      Analyse the following data and provide key insights.
+      Request: {{state.user_input.topic}}
+
+  writer:
+    model: llm
+    instruction: |
+      Write a concise, well-structured response to the following.
+      Request: {{state.user_input.topic}}
+
+  researcher:
+    model: llm
+    instruction: |
+      Research the following topic and summarise what is known.
+      Topic: {{state.user_input.topic}}
+
+workflow:
+  nodes: [router, analyst, writer, researcher]
+  entry: router
+  edges:
+    # The router agent's output (e.g. "analyst") is stored in state.router.
+    # The dispatch node resolves the template at runtime and routes there.
+    # allowed_targets restricts which nodes the dispatcher may send to.
+    - from: router
+      to: "{{state.router}}"
+      allowed_targets: [analyst, writer, researcher]

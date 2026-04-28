@@ -1,0 +1,68 @@
+name: agent_overrides_demo
+description: >
+  Demonstrates ADK 2.0 agent params: per-agent generate_content_config,
+  static_instruction, description (sub-agent delegation routing),
+  parallel_worker, and custom output_key.
+
+models:
+  ollama_local:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+agents:
+  # Sub-agents: static instructions only — no {{state.*}} templates.
+  search_specialist:
+    model: ollama_local
+    description: >
+      Finds factual information, statistics, and key concepts about any topic.
+      Use this agent first to gather raw facts.
+    instruction: >
+      You are a research specialist. The user will give you a topic.
+      Provide a concise bullet-point list of the most important facts,
+      key concepts, and recent developments about that topic.
+      Keep it under 200 words.
+    mode: single_turn
+    parallel_worker: true
+    generate_content_config:
+      temperature: 0.1
+      max_output_tokens: 512
+
+  synthesis_specialist:
+    model: ollama_local
+    description: >
+      Combines facts into a clear, readable narrative summary.
+      Use this agent after search_specialist has gathered facts.
+    instruction: >
+      You are a synthesis specialist. The user will give you raw facts
+      about a topic. Weave them into a clear, engaging 150-word narrative
+      summary suitable for a general audience.
+    mode: single_turn
+    parallel_worker: true
+    generate_content_config:
+      temperature: 0.7
+      max_output_tokens: 512
+
+  # Coordinator: orchestrates the two specialists via tool calls.
+  coordinator:
+    model: ollama_local
+    description: "Top-level coordinator that delegates to specialists."
+    static_instruction: >
+      You are a research coordinator with two specialist tools available:
+      search_specialist and synthesis_specialist.
+      You MUST always use both tools in sequence:
+      1. Call search_specialist with the topic to gather facts.
+      2. Call synthesis_specialist with those facts to create a summary.
+      Never answer directly — always delegate to your specialists.
+    instruction: "Research this topic using your specialist tools: {{state.user_input.topic}}"
+    output_key: coordinator_result
+    generate_content_config:
+      temperature: 0.3
+    sub_agents:
+      - search_specialist
+      - synthesis_specialist
+
+workflow:
+  nodes: [coordinator]
+  edges: []
+  entry: coordinator
+  max_llm_calls: 10

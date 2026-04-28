@@ -1,0 +1,69 @@
+name: typed_errors
+description: >
+  Demonstrate typed error routing. Different exception types and message
+  patterns route to dedicated handlers. A catch-all default handler covers
+  anything not matched by the typed edges.
+
+models:
+  llm:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+agents:
+  api_caller:
+    model: llm
+    instruction: |
+      Attempt to summarise the following topic. This agent may fail with
+      different error types in a real deployment.
+      Topic: {{state.user_input.topic}}
+    retry:
+      max_retries: 2
+      backoff: exponential
+      delay_seconds: 1.0
+
+  success_handler:
+    model: llm
+    instruction: |
+      The API call succeeded. Format the result for the user.
+      Result: {{state.api_caller}}
+
+  timeout_handler:
+    model: llm
+    instruction: |
+      The API call timed out. Advise the user to retry later.
+
+  rate_limit_handler:
+    model: llm
+    instruction: |
+      The API call hit a rate limit. Advise the user to wait and retry.
+
+  generic_error_handler:
+    model: llm
+    instruction: |
+      An unexpected error occurred. Log it and provide a generic fallback.
+      Error info: {{state._error_api_caller}}
+
+workflow:
+  nodes: [api_caller, success_handler, timeout_handler, rate_limit_handler, generic_error_handler]
+  entry: api_caller
+  edges:
+    - from: api_caller
+      to: success_handler
+
+    # Route TimeoutError to a specific handler.
+    - from: api_caller
+      to: timeout_handler
+      on_error: true
+      error_type: TimeoutError
+
+    # Route errors whose message contains "rate" or "limit" to rate-limit handler.
+    - from: api_caller
+      to: rate_limit_handler
+      on_error: true
+      error_match: "rate.?limit"
+
+    # Everything else falls through to the generic handler.
+    - from: api_caller
+      to: generic_error_handler
+      on_error: true
+      condition: default
