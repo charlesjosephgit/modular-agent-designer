@@ -28,9 +28,9 @@ uv run modular-agent-designer run my_agent/my_agent.yaml --input '{"message": "h
 name: research_assistant
 
 models:
-  sonnet:
-    provider: anthropic
-    model: anthropic/claude-sonnet-4-6
+  local:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
 
 tools:
   web:
@@ -39,12 +39,12 @@ tools:
 
 agents:
   researcher:
-    model: sonnet
+    model: local
     tools: [web]
     instruction: "Research {{state.topic}} and summarize your findings."
 
   writer:
-    model: sonnet
+    model: local
     instruction: "Write a short article based on: {{state.researcher}}"
 
 workflow:
