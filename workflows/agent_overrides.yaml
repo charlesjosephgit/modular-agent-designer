@@ -53,7 +53,7 @@ agents:
       1. Call search_specialist with the topic to gather facts.
       2. Call synthesis_specialist with those facts to create a summary.
       Never answer directly — always delegate to your specialists.
-    instruction: "Research this topic using your specialist tools: {{state.user_input.topic}}"
+    # instruction: "Research this topic using your specialist tools: {{state.user_input.topic}}"
     output_key: coordinator_result
     generate_content_config:
       temperature: 0.3

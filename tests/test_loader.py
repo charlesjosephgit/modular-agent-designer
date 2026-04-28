@@ -210,9 +210,9 @@ def test_both_instruction_and_file_raises(tmp_path: Path, monkeypatch: pytest.Mo
         load_workflow(p)
 
 
-def test_neither_instruction_nor_file_raises(tmp_path: Path) -> None:
+def test_neither_instruction_nor_file_is_valid(tmp_path: Path) -> None:
     yaml_text = _BASE_YAML.format(instruction_field="tools: []")
     p = tmp_path / "wf.yaml"
     p.write_text(yaml_text)
-    with pytest.raises(ValueError, match="required"):
-        load_workflow(p)
+    cfg = load_workflow(p)
+    assert cfg.agents["step_one"].instruction is None

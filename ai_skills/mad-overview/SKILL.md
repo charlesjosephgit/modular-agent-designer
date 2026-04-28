@@ -151,8 +151,8 @@ thinking:
 |---|---|---|---|
 | `model` | string | Yes | Must reference a key in `models:` |
 | `description` | string | No | Shown to the parent LLM to decide delegation — strongly recommended for sub-agents |
-| `instruction` | string | One of | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time |
-| `instruction_file` | string | One of | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher` |
+| `instruction` | string | No | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time. Mutually exclusive with `instruction_file`. |
+| `instruction_file` | string | No | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher`. Mutually exclusive with `instruction`. |
 | `static_instruction` | string | No | Cacheable static system content; never changes — ADK sends it to a cache-eligible position |
 | `static_instruction_file` | string | No | Dotted ref to a `.md` file containing the static instruction |
 | `tools` | list[string] | No | References to keys in `tools:` |
@@ -205,10 +205,16 @@ thinking:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `from` | string | — | Source node (required) |
-| `to` | `string \| list[string]` | — | Target node(s); list enables fan-out (required) |
+| `to` | `string \| list[string]` | — | Target node(s); list enables fan-out; `"{{state.x}}"` template enables dynamic destination (required) |
 | `condition` | string/int/bool/list/eval | `null` | Routing condition (exact match, list OR, eval expression, or `default`) |
+| `switch` | string/eval | `null` | Sugar: `"{{state.x}}"` template or `{eval: expr}`; matched against `cases` keys; expands to N eval edges at load time |
+| `cases` | map | `null` | Required with `switch:` — map of value → target node |
+| `default` | string | `null` | Fallback target when no `switch:` case matches (equivalent to `condition: default`) |
+| `allowed_targets` | list[string] | `null` | Constrains a dynamic `to:` template; unknown names rejected at load time |
 | `loop` | object | `null` | `{max_iterations, on_exhausted}` — controlled cycle; required for any edge forming a loop |
 | `on_error` | bool | `false` | Fire only when source node fails (after all retries); mutually exclusive with `condition` |
+| `error_type` | string | `null` | Exact match on exception class name; requires `on_error: true` |
+| `error_match` | string | `null` | Python `re.search` pattern on error message; requires `on_error: true` |
 | `parallel` | bool | `false` | Fan-out; requires `to: [list]` |
 | `join` | string | `null` | Barrier node — wait for all fan-out targets; requires `to: [list]` |
 

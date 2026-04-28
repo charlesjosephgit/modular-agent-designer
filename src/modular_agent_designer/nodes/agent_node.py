@@ -73,11 +73,12 @@ def build_sub_agent(
     all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     agent_kwargs: dict[str, Any] = dict(
         name=agent_name,
-        instruction=cfg.instruction,
         model=model,
         tools=all_tools,
         sub_agents=sub_agents,
     )
+    if cfg.instruction is not None:
+        agent_kwargs["instruction"] = cfg.instruction
     if cfg.description is not None:
         agent_kwargs["description"] = cfg.description
     if cfg.static_instruction is not None:
@@ -142,21 +143,27 @@ def build_agent_node(
                 f"(got {type(ctx.state).__name__}). This indicates an ADK version mismatch."
             )
         state_dict = ctx.state.to_dict()
-        resolved_instruction = resolve(instruction_template, state_dict)
+        resolved_instruction = (
+            resolve(instruction_template, state_dict)
+            if instruction_template is not None
+            else None
+        )
 
         logger.info("node '%s' start", agent_name)
 
-        agent = _agent_cache.get(resolved_instruction)
+        cache_key = resolved_instruction or ""
+        agent = _agent_cache.get(cache_key)
         if agent is None:
             agent_kwargs: dict[str, Any] = dict(
                 name=agent_name,
-                instruction=resolved_instruction,
                 model=model,
                 tools=all_tools,
                 output_key=cfg.output_key if cfg.output_key is not None else agent_name,
                 after_model_callback=make_capture_thinking_callback(agent_name),
                 sub_agents=sub_agents,
             )
+            if resolved_instruction is not None:
+                agent_kwargs["instruction"] = resolved_instruction
             if cfg.description is not None:
                 agent_kwargs["description"] = cfg.description
             if cfg.static_instruction is not None:
@@ -176,7 +183,7 @@ def build_agent_node(
             if planner is not None:
                 agent_kwargs["planner"] = planner
             agent = Agent(**agent_kwargs)
-            _agent_cache.set(resolved_instruction, agent)
+            _agent_cache.set(cache_key, agent)
             logger.debug(
                 "node '%s': created new Agent instance (cache size=%d)",
                 agent_name, len(_agent_cache),

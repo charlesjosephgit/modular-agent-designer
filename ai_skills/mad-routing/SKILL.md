@@ -351,6 +351,38 @@ See [`workflows/typed_errors.yaml`](../../workflows/typed_errors.yaml) for a run
 
 ---
 
+## Routing on Structured Output
+
+When an agent declares `output_schema:`, its output is a Pydantic model serialized to a dict in state. Downstream edges can route on individual fields using `eval` conditions:
+
+```yaml
+agents:
+  validator:
+    model: smart
+    output_schema: schemas.validation.ValidationResult  # Pydantic v2 class
+    instruction: |
+      Validate the user input: {{state.user_input.text}}
+      Return a ValidationResult with is_valid and reason fields.
+
+edges:
+  - from: validator
+    to: accept_handler
+    condition:
+      eval: "state.get('validator', {}).get('is_valid') == True"
+
+  - from: validator
+    to: reject_handler
+    condition: default
+```
+
+- The state key defaults to the agent name (`state['validator']`); override with `output_key:`.
+- Use `state.get('key', {}).get('field')` — safe when field may be absent.
+- Switch sugar also works: `switch: {eval: "state.get('validator', {}).get('category', '')"}`.
+
+See [`workflows/output_schema_routing.yaml`](../../workflows/output_schema_routing.yaml) and [`schemas/validation.py`](../../schemas/validation.py) for a runnable example.
+
+---
+
 ## Parallel / Fan-Out Edges
 
 Send work to multiple nodes concurrently using `to: [list]` with `parallel: true`:

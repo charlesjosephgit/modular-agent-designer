@@ -139,7 +139,7 @@ agents:
 - `instruction_file` takes a dotted ref: dots → path separators, `.md` appended automatically.
 - Resolved from the project root (cwd), so `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`.
 - The scaffolder creates `prompts/` with an `__init__.py` and a sample `.md` to start from.
-- `instruction` and `instruction_file` are mutually exclusive.
+- `instruction` and `instruction_file` are mutually exclusive. Both are optional — omit when the agent uses `static_instruction` alone or receives its prompt via delegation.
 
 **Template syntax (both forms):**
 
@@ -194,6 +194,43 @@ workflow:
 
 For full routing coverage (eval expressions, list OR, self-loops), load the `mad-routing` skill.
 
+**Switch/case** (route on a single state value — more concise than N separate condition edges):
+
+```yaml
+edges:
+  - from: classifier
+    switch: "{{state.classifier}}"
+    cases:
+      urgent: handle_urgent
+      normal: handle_normal
+    default: handle_other
+```
+
+See [`workflows/switch_example.yaml`](../../workflows/switch_example.yaml) for a runnable example.
+
+**Dynamic destination** (an LLM router picks the next node by name at runtime):
+
+```yaml
+edges:
+  - from: router
+    to: "{{state.router}}"
+    allowed_targets: [analyst, writer, researcher]
+```
+
+See [`workflows/dynamic_router.yaml`](../../workflows/dynamic_router.yaml) for a runnable example.
+
+**Parallel fan-out + join** (dispatch to multiple nodes concurrently, then synthesize):
+
+```yaml
+edges:
+  - from: dispatcher
+    to: [researcher_a, researcher_b, researcher_c]
+    parallel: true
+    join: synthesizer
+```
+
+See [`workflows/parallel_workflow.yaml`](../../workflows/parallel_workflow.yaml) for a runnable example.
+
 **Loop workflow** (writer → reviewer → revise cycle):
 
 ```yaml
@@ -214,11 +251,71 @@ workflow:
       condition: "approved"
 ```
 
+**Retry + typed error edges** (transient failures with typed fallback routing):
+
+```yaml
+agents:
+  api_caller:
+    retry:
+      max_retries: 3
+      backoff: exponential
+      delay_seconds: 1.0
+
+edges:
+  - from: api_caller
+    to: success_handler
+  - from: api_caller
+    to: timeout_handler
+    on_error: true
+    error_type: TimeoutError
+  - from: api_caller
+    to: generic_error
+    on_error: true
+    condition: default
+```
+
+See [`workflows/retry_workflow.yaml`](../../workflows/retry_workflow.yaml) and [`workflows/typed_errors.yaml`](../../workflows/typed_errors.yaml).
+
+**Structured-output routing** (Pydantic schema drives edge conditions):
+
+```yaml
+agents:
+  validator:
+    output_schema: schemas.validation.ValidationResult  # Pydantic v2 class
+
+edges:
+  - from: validator
+    to: accept_handler
+    condition:
+      eval: "state.get('validator', {}).get('is_valid') == True"
+  - from: validator
+    to: reject_handler
+    condition: default
+```
+
+See [`workflows/output_schema_routing.yaml`](../../workflows/output_schema_routing.yaml) + [`schemas/validation.py`](../../schemas/validation.py).
+
+**ADK 2.0 agent overrides** (`generate_content_config`, `parallel_worker`, `output_key`, `static_instruction`):
+
+See [`workflows/agent_overrides.yaml`](../../workflows/agent_overrides.yaml) for all supported fields.
+
 For full loop, error routing, and parallel edge coverage, load the `mad-routing` skill.
 
 ---
 
-## Step 5 — Run the Workflow
+## Step 5 — Verify Visually
+
+Before running, render the workflow as a Mermaid diagram to catch topology mistakes:
+
+```bash
+uv run modular-agent-designer diagram workflows/my_workflow.yaml
+```
+
+Paste the output into [mermaid.live](https://mermaid.live) or any GitHub/Markdown renderer. Nodes are rectangles (LLM agents) or hexagons (custom BaseNode). Retry count, mode, and conditional labels are shown on the graph.
+
+---
+
+## Step 7 — Run the Workflow
 
 ```bash
 uv run modular-agent-designer run workflows/my_workflow.yaml --input '{"topic": "climate change"}'

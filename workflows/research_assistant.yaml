@@ -1,5 +1,5 @@
 name: research_assistant
-description: Three-stage research workflow — local researcher, Gemini analyst, Claude writer.
+description: Three-stage research workflow — Ollama researcher, analyst, and writer.
 
 models:
   local_fast:

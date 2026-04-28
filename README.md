@@ -205,6 +205,7 @@ workflow:
         normal: handle_normal
       default: handle_other
   entry: agent_a                       # first node to run
+  max_llm_calls: 20                    # optional: circuit breaker; default 20
 ```
 
 ---
@@ -656,7 +657,7 @@ agents:
 - Resolution is from the **project root (cwd where the CLI runs)**, not the YAML file's directory.
 - The recommended layout is a top-level `prompts/` directory at the repo root, with files named `<workflow>__<agent>.md`.
 - `{{state.x}}` and `{{state.x.y.z}}` template syntax works identically inside prompt files — resolved at node-execution time, not load time.
-- `instruction` and `instruction_file` are mutually exclusive; exactly one must be set per agent.
+- `instruction` and `instruction_file` are mutually exclusive. Both are optional — omit them when the agent relies entirely on `static_instruction` or receives its prompt via tool/sub-agent delegation.
 
 ---
 
@@ -706,7 +707,7 @@ All providers route through `LiteLlm`. API keys are read from environment variab
 
 | Provider | model prefix | Env var required |
 |---|---|---|
-| Ollama | `ollama/` | `OLLAMA_API_BASE` (default: `http://localhost:11434`) |
+| Ollama | `ollama/` (completion) · `ollama_chat/` (tools/structured output) | `OLLAMA_API_BASE` (default: `http://localhost:11434`) |
 | Anthropic | `anthropic/` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `gemini/` | `GOOGLE_API_KEY` |
 | OpenAI | `openai/` | `OPENAI_API_KEY` |

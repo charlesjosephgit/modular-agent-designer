@@ -256,10 +256,7 @@ class AgentConfig(BaseModel):
             raise ValueError(
                 "Specify either 'instruction' or 'instruction_file', not both"
             )
-        if not has_inline and not has_file:
-            raise ValueError(
-                "One of 'instruction' or 'instruction_file' is required"
-            )
+
         has_static_inline = self.static_instruction is not None
         has_static_file = self.static_instruction_file is not None
         if has_static_inline and has_static_file:
