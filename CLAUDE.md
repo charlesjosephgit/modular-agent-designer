@@ -66,5 +66,5 @@ YAML file
 ## References
 
 - `README.md` — full user guide: YAML schema, branching/loops, custom nodes, library API, CLI reference.
-- `client_run.py` — programmatic (non-CLI) usage example.
+- `examples/client_run.py` — programmatic (non-CLI) usage example.
 - `workflows/` — YAML workflow examples (hello_world, conditional, research_assistant, mcp_example).

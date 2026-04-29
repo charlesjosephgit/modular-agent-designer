@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +27,25 @@ _USER_ID = "cli-user"
 _SESSION_ID = "cli-session"
 
 _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
+_INTERNAL_STATE_PREFIXES = (_STATE_PREFIX, "_loop_", "_error_", "_dispatch_")
+
+
+def _package_version() -> str:
+    try:
+        return version("modular-agent-designer")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+def _is_public_state_key(key: str) -> bool:
+    return not (
+        key.startswith(_INTERNAL_STATE_PREFIXES)
+        or key.endswith("__thinking")
+    )
 
 
 @click.group()
+@click.version_option(version=_package_version(), prog_name="modular-agent-designer")
 def main() -> None:
     """A modular framework for designing and orchestrating complex agentic workflows with ease."""
 
@@ -69,29 +86,45 @@ def main() -> None:
     type=click.Choice(_LOG_LEVELS, case_sensitive=False),
     help="Set logging level (DEBUG, INFO, WARNING, ERROR).",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Build the workflow and print the execution plan without running it.",
+)
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Enable INFO logging and print workflow details during dry runs.",
+)
 def run(
     yaml_path: str,
     input_json: str | None,
     input_file: str | None,
     mlflow_experiment_id: str | None,
     log_level: str | None,
+    dry_run: bool,
+    verbose: bool,
 ) -> None:
     """Run a workflow defined in YAML_PATH with --input JSON or --input-file PATH."""
-    if log_level is not None:
+    if log_level is not None or verbose:
+        effective_level = log_level.upper() if log_level is not None else "INFO"
         logging.basicConfig(
-            level=getattr(logging, log_level.upper()),
+            level=getattr(logging, effective_level),
             format="%(asctime)s %(name)s %(levelname)s %(message)s",
         )
 
-    # Exactly one of --input or --input-file must be provided.
+    # Exactly one of --input or --input-file must be provided, except dry-run
+    # mode where the workflow is built but not executed.
     if input_json is not None and input_file is not None:
         click.echo("Error: --input and --input-file are mutually exclusive.", err=True)
         sys.exit(1)
-    if input_json is None and input_file is None:
+    if not dry_run and input_json is None and input_file is None:
         click.echo("Error: one of --input or --input-file is required.", err=True)
         sys.exit(1)
 
-    raw_input: str
+    raw_input: str | None = None
     if input_file is not None:
         if input_file == "-":
             raw_input = sys.stdin.read()
@@ -101,7 +134,7 @@ def run(
                 click.echo(f"Error: --input-file not found: {p}", err=True)
                 sys.exit(1)
             raw_input = p.read_text(encoding="utf-8")
-    else:
+    elif input_json is not None:
         raw_input = input_json  # type: ignore[assignment]
 
     # Inject the CWD and the YAML file's directory into sys.path so that local
@@ -116,18 +149,20 @@ def run(
 
         setup_tracing(mlflow_experiment_id)
 
-    try:
-        _parsed = json.loads(raw_input)
-    except json.JSONDecodeError as exc:
-        click.echo(f"Error: input is not valid JSON: {exc}", err=True)
-        sys.exit(1)
-    if not isinstance(_parsed, dict):
-        click.echo(
-            f"Error: input must be a JSON object, got {type(_parsed).__name__}",
-            err=True,
-        )
-        sys.exit(1)
-    input_data: dict[str, Any] = _parsed
+    input_data: dict[str, Any] = {}
+    if raw_input is not None:
+        try:
+            _parsed = json.loads(raw_input)
+        except json.JSONDecodeError as exc:
+            click.echo(f"Error: input is not valid JSON: {exc}", err=True)
+            sys.exit(1)
+        if not isinstance(_parsed, dict):
+            click.echo(
+                f"Error: input must be a JSON object, got {type(_parsed).__name__}",
+                err=True,
+            )
+            sys.exit(1)
+        input_data = _parsed
 
     try:
         cfg = load_workflow(yaml_path)
@@ -140,6 +175,11 @@ def run(
     except (ValueError, ImportError, AttributeError, EnvironmentError) as exc:
         click.echo(f"Error building workflow: {exc}", err=True)
         sys.exit(1)
+
+    if dry_run:
+        click.echo(f"Dry run OK: workflow '{cfg.name}' builds successfully.")
+        _echo_workflow_details(cfg)
+        return
 
     final_state = asyncio.run(_run_workflow(workflow, input_data, cfg.workflow.max_llm_calls))
     click.echo(json.dumps(final_state, indent=2, default=str))
@@ -188,16 +228,7 @@ def validate(yaml_path: str, skip_build: bool) -> None:
     )
 
 
-@main.command(name="list")
-@click.argument("yaml_path")
-def list_workflow(yaml_path: str) -> None:
-    """List models, tools, agents, and workflow graph defined in YAML_PATH."""
-    try:
-        cfg = load_workflow(yaml_path)
-    except (FileNotFoundError, ValueError) as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-
+def _echo_workflow_details(cfg: Any) -> None:
     from .config.schema import AgentConfig, NodeRefConfig
 
     click.echo(f"\nWorkflow: {cfg.name}")
@@ -303,6 +334,19 @@ def list_workflow(yaml_path: str) -> None:
     else:
         click.echo("  edges: (none)")
     click.echo("")
+
+
+@main.command(name="list")
+@click.argument("yaml_path")
+def list_workflow(yaml_path: str) -> None:
+    """List models, tools, agents, and workflow graph defined in YAML_PATH."""
+    try:
+        cfg = load_workflow(yaml_path)
+    except (FileNotFoundError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    _echo_workflow_details(cfg)
 
 
 @main.command()
@@ -437,6 +481,6 @@ async def _run_workflow(
         return {
             k: v
             for k, v in dict(final_session.state).items()
-            if not k.startswith(_STATE_PREFIX)
+            if _is_public_state_key(k)
         }
     return {}

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from modular_agent_designer.cli import main
+from modular_agent_designer.cli import _is_public_state_key, main
 
 _VALID_YAML = textwrap.dedent("""\
     name: hello
@@ -73,6 +73,41 @@ def test_validate_valid_schema_only(tmp_path: Path) -> None:
     assert "OK" in result.output
     assert "schema" in result.output
     assert "hello" in result.output
+
+
+def test_top_level_version_option() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert "modular-agent-designer" in result.output
+
+
+def test_run_dry_run_does_not_require_input(tmp_path: Path) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--dry-run"])
+    assert result.exit_code == 0
+    assert "Dry run OK" in result.output
+    assert "Workflow graph" in result.output
+
+
+def test_run_verbose_dry_run_outputs_plan(tmp_path: Path) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--dry-run", "--verbose"])
+    assert result.exit_code == 0
+    assert "max_llm_calls" in result.output
+
+
+def test_internal_state_keys_are_filtered() -> None:
+    assert _is_public_state_key("result") is True
+    assert _is_public_state_key("__mda_dedup__fetch") is False
+    assert _is_public_state_key("_loop_writer_reviewer_iter") is False
+    assert _is_public_state_key("_error_worker") is False
+    assert _is_public_state_key("_dispatch_router_0") is False
+    assert _is_public_state_key("worker__thinking") is False
 
 
 def test_validate_missing_file(tmp_path: Path) -> None:

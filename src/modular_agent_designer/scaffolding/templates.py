@@ -145,7 +145,7 @@ uv run modular-agent-designer run {name}/{name}.yaml --input '{{"message": "hell
 ## Customise
 
 Edit `{name}.yaml` to change the model, add tools, or build a multi-agent graph.
-See the [full docs](https://github.com/your-org/modular-agent-designer) for the complete YAML schema.
+See the [full docs](https://github.com/charlesjosephgit/modular-agent-designer) for the complete YAML schema.
 """
 
 

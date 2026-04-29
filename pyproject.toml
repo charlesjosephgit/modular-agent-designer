@@ -1,6 +1,6 @@
 [project]
 name = "modular-agent-designer"
-version = "0.7.1"
+version = "0.7.2"
 description = "A modular framework for designing and orchestrating complex agentic workflows with ease."
 readme = "PYPI_README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/modular_agent_designer"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/modular_agent_designer/py.typed" = "modular_agent_designer/py.typed"
 
 [tool.uv]
 prerelease = "allow"

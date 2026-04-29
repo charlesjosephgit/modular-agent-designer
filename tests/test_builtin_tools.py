@@ -36,6 +36,7 @@ def test_read_text_file_rejects_path_traversal(tmp_path: Path, monkeypatch: pyte
     monkeypatch.chdir(tmp_path)
     result = read_text_file("../../etc/passwd")
     assert result.startswith("ERROR:")
+    assert "'..'" in result
 
 
 def test_read_text_file_missing_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,21 +102,44 @@ async def test_fetch_url_success() -> None:
 
 @pytest.mark.asyncio
 async def test_http_get_json_parses_dict() -> None:
-    with patch("modular_agent_designer.tools.native.http.fetch_url", new=AsyncMock(return_value='{"key": "value"}')):
+    with patch("modular_agent_designer.tools.native.http.httpx.AsyncClient") as mock_cls:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.text = '{"key": "value"}'
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
         result = await http_get_json("http://example.com/api")
         assert result == {"key": "value"}
 
 
 @pytest.mark.asyncio
 async def test_http_get_json_returns_error_on_fetch_failure() -> None:
-    with patch("modular_agent_designer.tools.native.http.fetch_url", new=AsyncMock(return_value="ERROR fetching http://x: refused")):
+    import httpx
+
+    with patch("modular_agent_designer.tools.native.http.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get.side_effect = httpx.ConnectError("refused")
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
         result = await http_get_json("http://x")
         assert "error" in result
 
 
 @pytest.mark.asyncio
 async def test_http_get_json_returns_error_on_invalid_json() -> None:
-    with patch("modular_agent_designer.tools.native.http.fetch_url", new=AsyncMock(return_value="not json")):
+    with patch("modular_agent_designer.tools.native.http.httpx.AsyncClient") as mock_cls:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.text = "not json"
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
         result = await http_get_json("http://example.com/bad")
         assert "error" in result
         assert "parse" in result["error"].lower() or "JSON" in result["error"]
@@ -123,10 +147,34 @@ async def test_http_get_json_returns_error_on_invalid_json() -> None:
 
 @pytest.mark.asyncio
 async def test_http_get_json_wraps_non_dict_response() -> None:
-    with patch("modular_agent_designer.tools.native.http.fetch_url", new=AsyncMock(return_value="[1, 2, 3]")):
+    with patch("modular_agent_designer.tools.native.http.httpx.AsyncClient") as mock_cls:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.text = "[1, 2, 3]"
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
         result = await http_get_json("http://example.com/list")
         assert "error" in result
         assert "data" in result
+
+
+@pytest.mark.asyncio
+async def test_http_get_json_allows_body_starting_with_error() -> None:
+    with patch("modular_agent_designer.tools.native.http.httpx.AsyncClient") as mock_cls:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.text = '"ERROR but valid JSON string"'
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await http_get_json("http://example.com/string")
+        assert result["error"] == "Expected JSON object, got str"
+        assert result["data"] == "ERROR but valid JSON string"
 
 
 def test_http_get_json_registered_as_builtin() -> None:

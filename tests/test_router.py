@@ -105,6 +105,11 @@ def test_eval_re_ignorecase():
     assert _matches(cond, "urgent request", {}, None) is True
 
 
+def test_eval_string_method_allowed():
+    cond = EvalCondition(eval="input.lower() == 'urgent'")
+    assert _matches(cond, "URGENT", {}, None) is True
+
+
 # ---------------------------------------------------------------------------
 # _matches — EvalCondition: error handling
 # ---------------------------------------------------------------------------
@@ -130,7 +135,7 @@ def test_eval_attribute_error_returns_false_and_warns(caplog):
 
 def test_eval_name_error_propagates():
     cond = EvalCondition(eval="undefined_variable > 0")
-    with pytest.raises(NameError):
+    with pytest.raises(ValueError, match="not allowed|unknown name"):
         _matches(cond, "", {}, None)
 
 
@@ -143,7 +148,19 @@ def test_eval_syntax_error_propagates():
 def test_eval_no_dangerous_builtins():
     # __import__ should not be accessible
     cond = EvalCondition(eval="__import__('os').getcwd()")
-    with pytest.raises((NameError, KeyError)):
+    with pytest.raises(ValueError, match="not allowed|unknown name"):
+        _matches(cond, "", {}, None)
+
+
+def test_eval_rejects_dunder_attribute():
+    cond = EvalCondition(eval="state.__class__")
+    with pytest.raises(ValueError, match="not allowed"):
+        _matches(cond, "", {}, None)
+
+
+def test_eval_rejects_unsupported_attribute():
+    cond = EvalCondition(eval="state.keys()")
+    with pytest.raises(ValueError, match="not allowed"):
         _matches(cond, "", {}, None)
 
 

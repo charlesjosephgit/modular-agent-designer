@@ -14,6 +14,8 @@ def read_text_file(path: str) -> str:
     p = Path(path)
     if p.is_absolute():
         return f"ERROR: absolute paths are not allowed (got '{path}')"
+    if ".." in p.parts:
+        return f"ERROR: '..' path components are not allowed (got '{path}')"
     try:
         resolved = (Path.cwd() / p).resolve()
     except Exception as exc:

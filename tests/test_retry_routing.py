@@ -150,6 +150,48 @@ def test_agent_node_writes_error_state_with_on_error(monkeypatch: pytest.MonkeyP
     assert events[0].actions.state_delta["_error_worker"]["error_message"] == "boom"
 
 
+def test_agent_node_timeout_reraises_without_on_error(monkeypatch: pytest.MonkeyPatch):
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class SlowCtx(_Ctx):
+        async def run_node(self, agent, node_input=None):
+            await asyncio.sleep(0.05)
+            return SimpleNamespace()
+
+    monkeypatch.setattr(agent_node, "Agent", FakeAgent)
+
+    cfg = AgentConfig(model="m", instruction="work", timeout_seconds=0.001)
+    node = build_agent_node("worker", cfg, object(), [], handles_errors=False)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(_collect_node_events(node, SlowCtx({})))
+
+
+def test_agent_node_without_timeout_does_not_call_wait_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class PassingCtx(_Ctx):
+        async def run_node(self, agent, node_input=None):
+            return SimpleNamespace()
+
+    def fail_wait_for(*args, **kwargs):
+        raise AssertionError("wait_for should not be called")
+
+    monkeypatch.setattr(agent_node, "Agent", FakeAgent)
+    monkeypatch.setattr(agent_node.asyncio, "wait_for", fail_wait_for)
+
+    cfg = AgentConfig(model="m", instruction="work")
+    node = build_agent_node("worker", cfg, object(), [], handles_errors=False)
+    events = asyncio.run(_collect_node_events(node, PassingCtx({})))
+    assert len(events) == 1
+
+
 # ---------------------------------------------------------------------------
 # Agent with retry in YAML
 # ---------------------------------------------------------------------------

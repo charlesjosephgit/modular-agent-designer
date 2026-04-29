@@ -77,10 +77,10 @@ def test_build_custom_node_no_config_uses_defaults(
     assert node.name == "test_node"
 
 
-def test_build_custom_node_function_ignores_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_build_custom_node_function_warns_when_ignoring_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """For plain function refs, config is silently ignored (functions don't take kwargs)."""
+    """For plain function refs, config is ignored with a warning."""
     pkg = tmp_path / "mypkg3"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -92,6 +92,8 @@ def test_build_custom_node_function_ignores_config(
         ref="mypkg3.nodes.my_node",
         config={"ignored": True},
     )
-    node = build_custom_node("test_node", cfg)
+    with caplog.at_level("WARNING", logger="modular_agent_designer.nodes.custom"):
+        node = build_custom_node("test_node", cfg)
     import inspect
     assert callable(node) or inspect.isfunction(node)
+    assert "ignoring config" in caplog.text

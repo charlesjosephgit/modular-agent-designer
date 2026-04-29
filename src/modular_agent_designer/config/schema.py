@@ -233,12 +233,12 @@ class AgentConfig(BaseModel):
             "Content is cached by the model and never varies with state."
         ),
     )
-    tools: list[str] = []
-    skills: list[str] = []
+    tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
     input_schema: Optional[str] = None
     output_schema: Optional[str] = None
     output_key: Optional[str] = None
-    sub_agents: list[str] = []
+    sub_agents: list[str] = Field(default_factory=list)
     mode: Optional[Literal["chat", "task", "single_turn"]] = None
     include_contents: Literal["default", "none"] = "default"
     disallow_transfer_to_parent: bool = False
@@ -247,6 +247,7 @@ class AgentConfig(BaseModel):
     generate_content_config: Optional[AgentGenerateContentConfig] = None
     thinking: Optional[AgentThinkingConfig] = None
     retry: Optional[RetryConfig] = None
+    timeout_seconds: Optional[float] = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_instruction(self) -> "AgentConfig":
@@ -269,7 +270,7 @@ class AgentConfig(BaseModel):
 class NodeRefConfig(BaseModel):
     type: Literal["node"]
     ref: str
-    config: dict[str, Any] = {}
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 NodeEntry = Annotated[
@@ -550,6 +551,7 @@ class WorkflowConfig(BaseModel):
 
 
 class RootConfig(BaseModel):
+    schema_version: int = 1
     name: str
     description: str = ""
     models: dict[str, ModelConfig]
@@ -557,6 +559,14 @@ class RootConfig(BaseModel):
     skills: dict[str, SkillConfig] = {}
     agents: dict[str, NodeEntry]
     workflow: WorkflowConfig
+
+    @model_validator(mode="after")
+    def validate_schema_version(self) -> "RootConfig":
+        if self.schema_version != 1:
+            raise ValueError(
+                f"Unsupported schema_version {self.schema_version}; only 1 is supported"
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod

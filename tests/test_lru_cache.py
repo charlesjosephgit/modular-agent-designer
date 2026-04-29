@@ -1,6 +1,8 @@
 """Tests for the _LRUCache used in agent_node.py."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from modular_agent_designer.nodes.agent_node import _LRUCache
 
 
@@ -53,3 +55,18 @@ def test_lru_cache_update_refreshes_order() -> None:
     assert cache.get("a") == 99
     assert cache.get("c") == 3
     assert cache.get("b") is None
+
+
+def test_lru_cache_thread_safe_under_concurrent_access() -> None:
+    cache = _LRUCache(maxsize=8)
+
+    def worker(offset: int) -> None:
+        for i in range(200):
+            key = str((offset + i) % 16)
+            cache.set(key, i)
+            cache.get(key)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(worker, range(8)))
+
+    assert len(cache) <= 8

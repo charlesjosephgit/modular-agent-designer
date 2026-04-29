@@ -69,9 +69,11 @@ Output: a JSON object containing each agent's output under its YAML name key.
 
 ## YAML Schema
 
-A workflow file is a single YAML document with five top-level sections:
+A workflow file is a single YAML document. `schema_version` is optional and
+defaults to `1`; unsupported versions fail during load with a clear error.
 
 ```yaml
+schema_version: 1
 name: my_workflow
 description: Optional description.
 
@@ -138,6 +140,7 @@ agents:
     input_schema: pkg.module.MyModel   # optional; Pydantic BaseModel for agent-as-tool input
     output_schema: pkg.Module.Class    # optional; Pydantic v2 class for structured output
     output_key: custom_result     # optional; state key to write output (default: agent name)
+    timeout_seconds: 60           # optional; per-node LLM call timeout
     generate_content_config:      # optional; per-agent generation overrides
       temperature: 0.2            # 0.0–2.0
       top_p: 0.9                  # 0.0–1.0
@@ -268,6 +271,11 @@ edges:
 | `re` | Python `re` module (regex) |
 
 **Safe builtins available:** `len`, `int`, `float`, `str`, `bool`, `abs`, `min`, `max`, `any`, `all`, `isinstance`, `sorted`, `sum`, `range`, `list`, `dict`, `set`, `tuple`, `enumerate`, `zip`, `reversed`, `round`.
+
+Eval expressions are AST-checked before execution. Simple dict access,
+comparisons, comprehensions, safe builtins, `state.get(...)`, common string
+methods, and `re.search(...)` are allowed; private/dunder attributes and
+unsupported calls are rejected.
 
 **Error handling:** if the expression raises `KeyError`, `AttributeError`, `IndexError`, or `TypeError` (e.g. a missing state key), it is treated as `False` and a `WARNING` is logged. `NameError` and `SyntaxError` propagate immediately so broken expressions fail loudly at run time.
 
@@ -654,7 +662,7 @@ agents:
 ```
 
 - Dots are folder separators; `.md` is appended automatically. The ref above resolves to `<cwd>/prompts/research_assistant__researcher.md`.
-- Resolution is from the **project root (cwd where the CLI runs)**, not the YAML file's directory.
+- Resolution checks the **project root (cwd where the CLI runs)** first, then falls back to the YAML file's directory.
 - The recommended layout is a top-level `prompts/` directory at the repo root, with files named `<workflow>__<agent>.md`.
 - `{{state.x}}` and `{{state.x.y.z}}` template syntax works identically inside prompt files — resolved at node-execution time, not load time.
 - `instruction` and `instruction_file` are mutually exclusive. Both are optional — omit them when the agent relies entirely on `static_instruction` or receives its prompt via tool/sub-agent delegation.
@@ -947,7 +955,7 @@ Creates `<agent_name>/` containing a ready-to-run YAML workflow, a Python entry 
 ### `run` — execute a workflow
 
 ```
-modular-agent-designer run <yaml_path> (--input '<json>' | --input-file <path>) [options]
+modular-agent-designer run <yaml_path> [--input '<json>' | --input-file <path>] [options]
 ```
 
 - `yaml_path` — path to the workflow YAML file
@@ -955,8 +963,10 @@ modular-agent-designer run <yaml_path> (--input '<json>' | --input-file <path>) 
 - `--input-file PATH` — read input JSON from a file; use `-` to read from stdin
 - `--mlflow EXPERIMENT_ID` — Enable MLflow tracing via OTLP
 - `--log-level LEVEL` — set logging verbosity: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
+- `--dry-run` — load and build the workflow, print the execution plan, and exit without running LLM calls
+- `--verbose` — enable INFO logging; useful with `--dry-run` while inspecting workflow setup
 
-Exactly one of `--input` or `--input-file` is required. Output: final session state as pretty-printed JSON.
+Exactly one of `--input` or `--input-file` is required unless `--dry-run` is set. Output: final session state as pretty-printed JSON.
 
 ```bash
 # Inline JSON
@@ -967,6 +977,9 @@ uv run modular-agent-designer run workflows/hello_world.yaml --input-file input.
 
 # From stdin
 echo '{"topic":"AI"}' | uv run modular-agent-designer run workflows/hello_world.yaml --input-file -
+
+# Build only, no LLM calls
+uv run modular-agent-designer run workflows/hello_world.yaml --dry-run
 
 # With debug logging
 uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"AI"}' --log-level DEBUG
@@ -1156,7 +1169,7 @@ export OPENAI_API_KEY=sk-...
 
 ## Architecture Notes
 
-- **ADK version**: `google-adk[extensions]==2.0.0a3` (alpha — breaking changes expected)
+- **ADK version**: `google-adk[extensions]==2.0.0b1` (beta — breaking changes expected)
 - **State injection**: Initial state from `--input` is set via `InMemorySessionService.create_session(state={"user_input": ...})` before the workflow runs
 - **Template timing**: `{{state.x.y}}` is resolved at node execution time (not workflow construction time) using `ctx.state.to_dict()`. Conditional blocks `{{#if state.key}}…{{/if}}` are resolved first, then value templates.
 - **AgentNode wrapper**: Each YAML agent becomes a `@node(rerun_on_resume=True)` async generator — required by ADK when calling `ctx.run_node()`. Optionally wrapped in a retry loop when `retry:` config is set.

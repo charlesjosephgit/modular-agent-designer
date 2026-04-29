@@ -6,8 +6,8 @@ Verifies:
 - static_instruction, description, parallel_worker, generate_content_config all compile cleanly
 
 Run:
-    uv run python run_agent_overrides.py
-    uv run python run_agent_overrides.py --topic "quantum computing"
+    uv run python examples/run_agent_overrides.py
+    uv run python examples/run_agent_overrides.py --topic "quantum computing"
 """
 from __future__ import annotations
 

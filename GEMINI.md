@@ -4,7 +4,7 @@ A modular framework for designing and orchestrating complex agentic workflows wi
 
 ## Project Overview
 
-- **Core Technology**: Built on `google-adk[extensions]==2.0.0a3`.
+- **Core Technology**: Built on `google-adk[extensions]==2.0.0b1`.
 - **Model Abstraction**: Uses `LiteLlm` to support multiple providers (Ollama, Anthropic, Google Gemini, OpenAI).
 - **Workflow Engine**: Supports complex graph topologies including conditional branching and loops (cycles). Each node can be an LLM-powered agent or a custom Python node.
 - **State Management**: Automatically tracks node outputs in a shared session state. Uses custom `{{state.path}}` templating for instruction injection at runtime.

@@ -1,6 +1,7 @@
 """Compile a RootConfig into a runnable ADK Workflow."""
 from __future__ import annotations
 
+import ast
 import logging
 import re
 from collections import defaultdict, deque
@@ -35,6 +36,153 @@ _SAFE_BUILTINS = {
     "list": list, "dict": dict, "set": set, "tuple": tuple,
     "enumerate": enumerate, "zip": zip, "reversed": reversed, "round": round,
 }
+
+_SAFE_ATTRS = {
+    "get",
+    "lower",
+    "upper",
+    "strip",
+    "startswith",
+    "endswith",
+    "search",
+    "match",
+    "fullmatch",
+    "IGNORECASE",
+    "MULTILINE",
+    "DOTALL",
+}
+
+_SAFE_AST_NODES = (
+    ast.Expression,
+    ast.BoolOp,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.IfExp,
+    ast.Compare,
+    ast.Call,
+    ast.Name,
+    ast.Load,
+    ast.Store,
+    ast.Constant,
+    ast.Subscript,
+    ast.Slice,
+    ast.List,
+    ast.Tuple,
+    ast.Dict,
+    ast.Set,
+    ast.ListComp,
+    ast.GeneratorExp,
+    ast.comprehension,
+    ast.Attribute,
+    ast.And,
+    ast.Or,
+    ast.Not,
+    ast.Eq,
+    ast.NotEq,
+    ast.Lt,
+    ast.LtE,
+    ast.Gt,
+    ast.GtE,
+    ast.Is,
+    ast.IsNot,
+    ast.In,
+    ast.NotIn,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.USub,
+    ast.UAdd,
+)
+
+
+class _SafeEvalValidator(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self._names = {"state", "input", "raw_input", "re", *_SAFE_BUILTINS.keys()}
+        self._bound_names: set[str] = set()
+
+    def generic_visit(self, node: ast.AST) -> None:
+        if not isinstance(node, _SAFE_AST_NODES):
+            raise ValueError(
+                f"eval condition uses unsupported syntax: {type(node).__name__}"
+            )
+        super().generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Store):
+            self._bound_names.add(node.id)
+            return
+        if node.id not in self._names and node.id not in self._bound_names:
+            raise ValueError(f"eval condition references unknown name '{node.id}'")
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr.startswith("_") or node.attr not in _SAFE_ATTRS:
+            raise ValueError(f"eval condition attribute '{node.attr}' is not allowed")
+        self.visit(node.value)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name):
+            if node.func.id not in _SAFE_BUILTINS:
+                raise ValueError(
+                    f"eval condition call to '{node.func.id}' is not allowed"
+                )
+        elif isinstance(node.func, ast.Attribute):
+            self.visit(node.func)
+        else:
+            raise ValueError("eval condition call target is not allowed")
+        for arg in node.args:
+            self.visit(arg)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comprehension(node.elt, node.generators)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension(node.elt, node.generators)
+
+    def _visit_comprehension(
+        self, elt: ast.AST, generators: list[ast.comprehension]
+    ) -> None:
+        old_bound = set(self._bound_names)
+        try:
+            for gen in generators:
+                self._collect_targets(gen.target)
+                self.visit(gen.iter)
+                for if_expr in gen.ifs:
+                    self.visit(if_expr)
+            self.visit(elt)
+        finally:
+            self._bound_names = old_bound
+
+    def _collect_targets(self, target: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            self._bound_names.add(target.id)
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                self._collect_targets(item)
+            return
+        raise ValueError("eval condition comprehension target is not allowed")
+
+
+def _safe_eval(expr: str, state_dict: dict, output: str, raw_output: Any) -> Any:
+    parsed = ast.parse(expr, mode="eval")
+    _SafeEvalValidator().visit(parsed)
+    compiled = compile(parsed, "<workflow condition>", "eval")
+    return eval(
+        compiled,
+        {"__builtins__": _SAFE_BUILTINS, "re": re},
+        {
+            "state": state_dict,
+            "input": output,
+            "raw_input": raw_output,
+        },
+    )
+
 
 # State key prefix for loop iteration counters.
 _LOOP_ITER_PREFIX = "_loop_"
@@ -107,7 +255,7 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     error_edges = [e for e in static_edges if e.on_error]
 
     # Identify sources that have on_error edges — these need unified routing.
-    error_src_names: set[str] = {e.from_ for e in error_edges}
+    expanded_error_src_names: set[str] = {e.from_ for e in error_edges}
 
     # Group ALL edges by source node.
     all_edges_by_src: dict[str, list] = defaultdict(list)
@@ -117,7 +265,7 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     # Group normal-only edges by source (for nodes WITHOUT on_error edges).
     normal_edges_by_src: dict[str, list] = defaultdict(list)
     for edge_cfg in normal_edges:
-        if edge_cfg.from_ not in error_src_names:
+        if edge_cfg.from_ not in expanded_error_src_names:
             normal_edges_by_src[edge_cfg.from_].append(edge_cfg)
 
     # --- Wire nodes WITHOUT on_error edges (original logic) ---
@@ -197,7 +345,7 @@ def build_workflow(cfg: RootConfig) -> Workflow:
                     )
 
     # --- Wire nodes WITH on_error edges (unified error-aware router) ---
-    for src_name in error_src_names:
+    for src_name in expanded_error_src_names:
         src_node = node_callables[src_name]
         src_all_edges = all_edges_by_src[src_name]
         src_normal = [e for e in src_all_edges if not e.on_error]
@@ -678,15 +826,7 @@ def _matches(
     if isinstance(condition, EvalCondition):
         try:
             return bool(
-                eval(
-                    condition.eval,
-                    {"__builtins__": _SAFE_BUILTINS, "re": re},
-                    {
-                        "state": state_dict,
-                        "input": output,
-                        "raw_input": raw_output,
-                    },
-                )
+                _safe_eval(condition.eval, state_dict, output, raw_output)
             )
         except (KeyError, AttributeError, IndexError, TypeError) as exc:
             logger.warning(

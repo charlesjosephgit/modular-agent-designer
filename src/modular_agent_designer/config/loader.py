@@ -18,17 +18,25 @@ _DOTTED_REF_RE = re.compile(
 _STATE_TEMPLATE_RE = re.compile(r"^\{\{\s*state\.([\w.]+)\s*\}\}$")
 
 
-def _dotted_ref_to_path(ref: str) -> Path:
+def _dotted_ref_to_path(ref: str, base_dir: Path | None = None) -> Path:
     """Convert a dotted ref like 'prompts.my_agent' to a Path with .md suffix.
 
-    Resolved from the current working directory.
+    Resolved from the current working directory first. If not found and
+    *base_dir* is provided, fall back to resolving relative to that directory.
     """
     if not _DOTTED_REF_RE.match(ref):
         raise ValueError(
             f"instruction_file '{ref}' is not a valid dotted ref "
             f"(e.g. 'prompts.my_workflow__my_agent')"
         )
-    return Path.cwd().joinpath(*ref.split(".")).with_suffix(".md")
+    parts = ref.split(".")
+    cwd_path = Path.cwd().joinpath(*parts).with_suffix(".md")
+    if cwd_path.exists() or base_dir is None:
+        return cwd_path
+    base_path = base_dir.joinpath(*parts).with_suffix(".md")
+    if base_path.exists():
+        return base_path
+    return cwd_path
 
 
 def _resolve_file_field(
@@ -36,6 +44,7 @@ def _resolve_file_field(
     name: str,
     file_key: str,
     inline_key: str,
+    base_dir: Path | None = None,
 ) -> None:
     """Resolve a *_file dotted ref to file contents in-place."""
     ref = agent.get(file_key)
@@ -46,7 +55,7 @@ def _resolve_file_field(
             f"Agent '{name}': specify either '{inline_key}' or"
             f" '{file_key}', not both"
         )
-    file_path = _dotted_ref_to_path(ref)
+    file_path = _dotted_ref_to_path(ref, base_dir)
     try:
         agent[inline_key] = file_path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -60,7 +69,7 @@ def _resolve_file_field(
     del agent[file_key]
 
 
-def _resolve_instruction_files(raw: dict) -> None:
+def _resolve_instruction_files(raw: dict, base_dir: Path | None = None) -> None:
     """Resolve instruction_file and static_instruction_file dotted refs to file contents."""
     agents = raw.get("agents", {})
     if not isinstance(agents, dict):
@@ -68,8 +77,8 @@ def _resolve_instruction_files(raw: dict) -> None:
     for name, agent in agents.items():
         if not isinstance(agent, dict):
             continue
-        _resolve_file_field(agent, name, "instruction_file", "instruction")
-        _resolve_file_field(agent, name, "static_instruction_file", "static_instruction")
+        _resolve_file_field(agent, name, "instruction_file", "instruction", base_dir)
+        _resolve_file_field(agent, name, "static_instruction_file", "static_instruction", base_dir)
 
 
 def _switch_expr_to_eval(switch_val: Any, from_node: str) -> str:
@@ -179,7 +188,7 @@ def load_workflow(path: str | Path) -> RootConfig:
             f"got {type(raw).__name__}: {p}"
         )
 
-    _resolve_instruction_files(raw)
+    _resolve_instruction_files(raw, p.parent)
     _expand_switch_edges(raw)
 
     try:

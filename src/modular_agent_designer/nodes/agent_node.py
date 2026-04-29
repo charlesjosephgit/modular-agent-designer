@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 
 import logging
+import threading
 from collections import OrderedDict
 from typing import Any, AsyncGenerator
 
@@ -37,23 +38,27 @@ class _LRUCache:
     def __init__(self, maxsize: int = _AGENT_CACHE_MAXSIZE) -> None:
         self._maxsize = maxsize
         self._data: OrderedDict[str, Any] = OrderedDict()
+        self._lock = threading.RLock()
 
     def get(self, key: str) -> Any | None:
-        if key not in self._data:
-            return None
-        self._data.move_to_end(key)
-        return self._data[key]
+        with self._lock:
+            if key not in self._data:
+                return None
+            self._data.move_to_end(key)
+            return self._data[key]
 
     def set(self, key: str, value: Any) -> None:
-        if key in self._data:
-            self._data.move_to_end(key)
-        else:
-            if len(self._data) >= self._maxsize:
-                self._data.popitem(last=False)
-        self._data[key] = value
+        with self._lock:
+            if key in self._data:
+                self._data.move_to_end(key)
+            else:
+                if len(self._data) >= self._maxsize:
+                    self._data.popitem(last=False)
+            self._data[key] = value
 
     def __len__(self) -> int:
-        return len(self._data)
+        with self._lock:
+            return len(self._data)
 
 
 def build_sub_agent(
@@ -61,7 +66,7 @@ def build_sub_agent(
     cfg: AgentConfig,
     model: LiteLlm,
     tools: list[Any],
-    sub_agents: list[Any] = [],
+    sub_agents: list[Any] | None = None,
     skill_toolset: Any = None,
 ) -> Agent:
     """Build a plain ADK Agent for use as a sub-agent (not a workflow node).
@@ -70,6 +75,7 @@ def build_sub_agent(
     and no after_model_callback (thinking capture is for workflow nodes only).
     Their instructions are static — {{state.x}} templates are not supported.
     """
+    sub_agents = sub_agents or []
     all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     agent_kwargs: dict[str, Any] = dict(
         name=agent_name,
@@ -113,11 +119,12 @@ def build_agent_node(
     cfg: AgentConfig,
     model: LiteLlm,
     tools: list[Any],
-    sub_agents: list[Any] = [],
+    sub_agents: list[Any] | None = None,
     skill_toolset: Any = None,
     handles_errors: bool = False,
 ) -> Any:
     """Return an ADK-compatible node for a single YAML agent entry."""
+    sub_agents = sub_agents or []
     all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
     instruction_template = cfg.instruction
     output_schema_class = _load_output_schema(cfg.output_schema)
@@ -197,7 +204,13 @@ def build_agent_node(
 
         for attempt in range(1, max_attempts + 1):
             try:
-                result = await ctx.run_node(agent, node_input=node_input)
+                run_coro = ctx.run_node(agent, node_input=node_input)
+                if cfg.timeout_seconds is not None:
+                    result = await asyncio.wait_for(
+                        run_coro, timeout=cfg.timeout_seconds
+                    )
+                else:
+                    result = await run_coro
                 effective_output_key = cfg.output_key if cfg.output_key is not None else agent_name
                 output = state_dict.get(effective_output_key, "")
                 logger.info(

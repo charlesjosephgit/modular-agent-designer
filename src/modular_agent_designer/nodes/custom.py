@@ -21,12 +21,15 @@ parameterised nodes without needing a new subclass per use-case:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from google.adk.workflow import BaseNode
 
 from ..config.schema import NodeRefConfig
 from ..utils.imports import import_dotted_ref
+
+logger = logging.getLogger(__name__)
 
 
 def build_custom_node(node_name: str, cfg: NodeRefConfig) -> Any:
@@ -40,5 +43,13 @@ def build_custom_node(node_name: str, cfg: NodeRefConfig) -> Any:
 
     if isinstance(obj, type) and issubclass(obj, BaseNode):
         return obj(name=node_name, **cfg.config)
+
+    if cfg.config:
+        logger.warning(
+            "Custom node '%s': config is only supported for BaseNode subclasses; "
+            "ignoring config for callable ref '%s'",
+            node_name,
+            cfg.ref,
+        )
 
     return obj

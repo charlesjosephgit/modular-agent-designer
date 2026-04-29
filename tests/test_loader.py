@@ -36,6 +36,49 @@ def test_valid_yaml_loads(tmp_path: Path) -> None:
     assert "step_one" in cfg.agents
 
 
+def test_schema_version_defaults_to_one(tmp_path: Path) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(VALID_YAML)
+    cfg = load_workflow(p)
+    assert cfg.schema_version == 1
+
+
+def test_schema_version_one_loads(tmp_path: Path) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text("schema_version: 1\n" + VALID_YAML)
+    cfg = load_workflow(p)
+    assert cfg.schema_version == 1
+
+
+def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text("schema_version: 2\n" + VALID_YAML)
+    with pytest.raises(ValueError, match="Unsupported schema_version"):
+        load_workflow(p)
+
+
+def test_agent_timeout_seconds_loads(tmp_path: Path) -> None:
+    yaml_text = VALID_YAML.replace(
+        'instruction: "Say hello to {{state.user_input.name}}."',
+        'instruction: "Say hello to {{state.user_input.name}}."\n    timeout_seconds: 5',
+    )
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    cfg = load_workflow(p)
+    assert cfg.agents["step_one"].timeout_seconds == 5
+
+
+def test_agent_timeout_seconds_must_be_positive(tmp_path: Path) -> None:
+    yaml_text = VALID_YAML.replace(
+        'instruction: "Say hello to {{state.user_input.name}}."',
+        'instruction: "Say hello to {{state.user_input.name}}."\n    timeout_seconds: 0',
+    )
+    p = tmp_path / "wf.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        load_workflow(p)
+
+
 def test_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="not found"):
         load_workflow(tmp_path / "nonexistent.yaml")
@@ -159,6 +202,50 @@ def test_instruction_file_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert isinstance(agent, AgentConfig)
     assert agent.instruction == "Hello {{state.user_input.name}}."
     assert agent.instruction_file is None
+
+
+def test_instruction_file_falls_back_to_yaml_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "cwd"
+    project = tmp_path / "project"
+    cwd.mkdir()
+    prompts_dir = project / "prompts"
+    prompts_dir.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    (prompts_dir / "my_prompt.md").write_text("Hello from YAML dir.")
+    yaml_text = _BASE_YAML.format(
+        instruction_field="instruction_file: prompts.my_prompt"
+    )
+    p = project / "wf.yaml"
+    p.write_text(yaml_text)
+    cfg = load_workflow(p)
+    from modular_agent_designer.config.schema import AgentConfig
+    agent = cfg.agents["step_one"]
+    assert isinstance(agent, AgentConfig)
+    assert agent.instruction == "Hello from YAML dir."
+
+
+def test_instruction_file_prefers_cwd_over_yaml_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "cwd"
+    project = tmp_path / "project"
+    (cwd / "prompts").mkdir(parents=True)
+    (project / "prompts").mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    (cwd / "prompts" / "my_prompt.md").write_text("Hello from cwd.")
+    (project / "prompts" / "my_prompt.md").write_text("Hello from YAML dir.")
+    yaml_text = _BASE_YAML.format(
+        instruction_field="instruction_file: prompts.my_prompt"
+    )
+    p = project / "wf.yaml"
+    p.write_text(yaml_text)
+    cfg = load_workflow(p)
+    from modular_agent_designer.config.schema import AgentConfig
+    agent = cfg.agents["step_one"]
+    assert isinstance(agent, AgentConfig)
+    assert agent.instruction == "Hello from cwd."
 
 
 def test_instruction_file_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
