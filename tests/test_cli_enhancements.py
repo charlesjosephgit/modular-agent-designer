@@ -5,10 +5,13 @@ import json
 import textwrap
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
+from google.adk.events.event import Event
+from google.genai import types
 
-from modular_agent_designer.cli import _is_public_state_key, main
+from modular_agent_designer.cli import _is_public_state_key, _printable_event_chunks, main
 
 _VALID_YAML = textwrap.dedent("""\
     name: hello
@@ -108,6 +111,58 @@ def test_internal_state_keys_are_filtered() -> None:
     assert _is_public_state_key("_error_worker") is False
     assert _is_public_state_key("_dispatch_router_0") is False
     assert _is_public_state_key("worker__thinking") is False
+
+
+def test_printable_event_chunks_include_content_text() -> None:
+    event = Event(
+        content=types.Content(
+            role="model",
+            parts=[types.Part(text="hello from the model")],
+        )
+    )
+
+    assert _printable_event_chunks(event) == ["hello from the model"]
+
+
+def test_printable_event_chunks_include_output_text() -> None:
+    event = Event(output="node output")
+
+    assert _printable_event_chunks(event) == ["node output"]
+
+
+def test_printable_event_chunks_json_formats_structured_output() -> None:
+    event = Event(output={"answer": ["one", "two"]})
+
+    assert _printable_event_chunks(event) == [
+        json.dumps({"answer": ["one", "two"]}, indent=2)
+    ]
+
+
+def test_printable_event_chunks_ignore_tool_only_events() -> None:
+    event = Event(
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(
+                    function_call=types.FunctionCall(name="lookup", args={"q": "x"})
+                )
+            ],
+        )
+    )
+
+    assert _printable_event_chunks(event) == []
+
+
+def test_printable_event_chunks_deduplicate_content_and_output() -> None:
+    event = Event(
+        content=types.Content(
+            role="model",
+            parts=[types.Part(text="same value")],
+        ),
+        output="same value",
+    )
+
+    assert _printable_event_chunks(event) == ["same value"]
 
 
 def test_validate_missing_file(tmp_path: Path) -> None:
@@ -277,6 +332,28 @@ def test_run_stdin_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert "mutually exclusive" not in result.output
     assert "required" not in result.output
+
+
+def test_run_prints_streamed_events_before_final_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20):
+        click.echo("streamed event")
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--input", '{"topic": "x"}'])
+
+    assert result.exit_code == 0
+    assert result.output.index("streamed event") < result.output.index('"greeter"')
+    assert '"greeter": "done"' in result.output
 
 
 def test_run_input_file_not_found(tmp_path: Path) -> None:

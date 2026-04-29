@@ -44,6 +44,38 @@ def _is_public_state_key(key: str) -> bool:
     )
 
 
+def _printable_event_chunks(event: Any) -> list[str]:
+    chunks: list[str] = []
+    seen: set[str] = set()
+
+    content = getattr(event, "content", None)
+    parts = getattr(content, "parts", None) if content is not None else None
+    if parts:
+        for part in parts:
+            text = getattr(part, "text", None)
+            if text:
+                _append_printable_chunk(chunks, seen, text)
+
+    output = getattr(event, "output", None)
+    if output is not None:
+        _append_printable_chunk(chunks, seen, _format_event_output(output))
+
+    return chunks
+
+
+def _append_printable_chunk(chunks: list[str], seen: set[str], value: str) -> None:
+    value = value.strip()
+    if value and value not in seen:
+        seen.add(value)
+        chunks.append(value)
+
+
+def _format_event_output(output: Any) -> str:
+    if isinstance(output, (dict, list)):
+        return json.dumps(output, indent=2, default=str)
+    return str(output)
+
+
 @click.group()
 @click.version_option(version=_package_version(), prog_name="modular-agent-designer")
 def main() -> None:
@@ -459,13 +491,14 @@ async def _run_workflow(
         parts=[types.Part(text=json.dumps(input_data))],
     )
 
-    async for _ in runner.run_async(
+    async for event in runner.run_async(
         user_id=_USER_ID,
         session_id=session.id,
         new_message=new_message,
         run_config=RunConfig(max_llm_calls=max_llm_calls),
     ):
-        pass  # drain events; state is written into the session
+        for chunk in _printable_event_chunks(event):
+            click.echo(chunk)
 
     # Return the final session state.
     final_session = await session_service.get_session(
