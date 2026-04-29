@@ -29,7 +29,7 @@ A modular framework for designing and orchestrating complex agentic workflows wi
 
 ### Prerequisites
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- Python 3.13+
+- Python 3.11+
 
 ### Setup
 ```bash

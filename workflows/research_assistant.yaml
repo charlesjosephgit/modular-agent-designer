@@ -6,17 +6,10 @@ models:
     provider: ollama
     model: ollama/gemma4:e4b
 
-tools:
-  fetch:
-    type: builtin
-    name: fetch_url
-
-
 agents:
   researcher:
     model: local_fast
     instruction_file: prompts.research_assistant__researcher
-    tools: [fetch]
 
   analyst:
     model: local_fast

@@ -8,7 +8,7 @@ Define entire workflows — graph topology, nodes, edges, agents, tools, and mod
 
 ## Install
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.13+.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```bash
 uv sync --prerelease=allow          # install runtime

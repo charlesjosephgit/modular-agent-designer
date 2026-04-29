@@ -115,6 +115,7 @@ def build_agent_node(
     tools: list[Any],
     sub_agents: list[Any] = [],
     skill_toolset: Any = None,
+    handles_errors: bool = False,
 ) -> Any:
     """Return an ADK-compatible node for a single YAML agent entry."""
     all_tools = tools + [skill_toolset] if skill_toolset is not None else tools
@@ -222,6 +223,10 @@ def build_agent_node(
                         agent_name, max_attempts,
                         type(exc).__name__, exc,
                     )
+
+        if not handles_errors:
+            assert last_exc is not None
+            raise last_exc
 
         # All retries exhausted — write error info to state for on_error routing.
         error_key = f"_error_{agent_name}"

@@ -1,15 +1,18 @@
 """Unit tests for retry configuration and on_error routing."""
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from modular_agent_designer.config.loader import load_workflow
-from modular_agent_designer.config.schema import RetryConfig
-from modular_agent_designer.nodes.agent_node import _compute_retry_delay
+from modular_agent_designer.config.schema import AgentConfig, RetryConfig
+from modular_agent_designer.nodes import agent_node
+from modular_agent_designer.nodes.agent_node import _compute_retry_delay, build_agent_node
 from modular_agent_designer.workflow.builder import _error_edge_matches, build_workflow
 
 
@@ -17,6 +20,38 @@ def _load(tmp_path: Path, content: str):
     p = tmp_path / "wf.yaml"
     p.write_text(content)
     return load_workflow(p)
+
+
+class _State(dict):
+    def to_dict(self):
+        return dict(self)
+
+
+class _Ctx:
+    def __init__(self, state: dict):
+        self.state = _State(state)
+        self.actions = SimpleNamespace(state_delta={})
+
+
+async def _run_node_route(node, state: dict) -> str | None:
+    async for event in node.run(ctx=_Ctx(state), node_input=None):
+        return event.actions.route
+    return None
+
+
+async def _collect_node_events(node, ctx) -> list:
+    events = []
+    async for event in node.run(ctx=ctx, node_input=None):
+        events.append(event)
+    return events
+
+
+def _node_by_name(wf, name: str):
+    for edge in wf.edges:
+        for node in (edge.from_node, edge.to_node):
+            if getattr(node, "name", None) == name:
+                return node
+    raise AssertionError(f"node not found: {name}")
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +109,45 @@ def test_exponential_delay():
 
 def test_delay_none_config():
     assert _compute_retry_delay(None, 1) == 0
+
+
+def test_agent_node_reraises_without_on_error(monkeypatch: pytest.MonkeyPatch):
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FailingCtx(_Ctx):
+        async def run_node(self, agent, node_input=None):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(agent_node, "Agent", FakeAgent)
+
+    cfg = AgentConfig(model="m", instruction="work")
+    node = build_agent_node("worker", cfg, object(), [], handles_errors=False)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(_collect_node_events(node, FailingCtx({})))
+
+
+def test_agent_node_writes_error_state_with_on_error(monkeypatch: pytest.MonkeyPatch):
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FailingCtx(_Ctx):
+        async def run_node(self, agent, node_input=None):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(agent_node, "Agent", FakeAgent)
+
+    cfg = AgentConfig(model="m", instruction="work")
+    node = build_agent_node("worker", cfg, object(), [], handles_errors=True)
+
+    events = asyncio.run(_collect_node_events(node, FailingCtx({})))
+
+    assert len(events) == 1
+    assert events[0].actions.state_delta["_error_worker"]["error_type"] == "RuntimeError"
+    assert events[0].actions.state_delta["_error_worker"]["error_message"] == "boom"
 
 
 # ---------------------------------------------------------------------------
@@ -398,3 +472,191 @@ def test_typed_error_routing_routes_are_distinct(tmp_path: Path):
     assert "_error_0" in routes
     assert "_error_1" in routes
     assert "_error_2" in routes
+
+
+def test_on_error_preserves_conditional_success_routing(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: mixed_success_error
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call, retry: {max_retries: 1}}
+          low: {model: m, instruction: low}
+          high: {model: m, instruction: high}
+          fallback: {model: m, instruction: fallback}
+          error: {model: m, instruction: error}
+        workflow:
+          nodes: [caller, low, high, fallback, error]
+          edges:
+            - from: caller
+              to: low
+              condition: low
+            - from: caller
+              to: high
+              condition: high
+            - from: caller
+              to: fallback
+              condition: default
+            - from: caller
+              to: error
+              on_error: true
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+
+    routes = [e.route for e in wf.edges if e.route is not None]
+    assert "_ok" in routes
+    assert "_route_0" in routes
+    assert "_route_1" in routes
+    assert "_route_2" in routes
+    assert "_error_0" in routes
+
+    error_router = _node_by_name(wf, "caller_error_router")
+    success_router = _node_by_name(wf, "caller_router")
+
+    ok_route = asyncio.run(_run_node_route(error_router, {"caller": "high"}))
+    high_route = asyncio.run(_run_node_route(success_router, {"caller": "high"}))
+
+    assert ok_route == "_ok"
+    assert high_route == "_route_1"
+
+
+def test_on_error_preserves_dynamic_success_routing(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: dynamic_success_error
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call, retry: {max_retries: 1}}
+          node_a: {model: m, instruction: a}
+          node_b: {model: m, instruction: b}
+          error: {model: m, instruction: error}
+        workflow:
+          nodes: [caller, node_a, node_b, error]
+          edges:
+            - from: caller
+              to: "{{state.caller.next_node}}"
+              allowed_targets: [node_a, node_b]
+            - from: caller
+              to: error
+              on_error: true
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+
+    routes = {e.route for e in wf.edges if e.route is not None}
+    assert "_ok" in routes
+    assert "node_a" in routes
+    assert "node_b" in routes
+    assert "_error_0" in routes
+
+    dispatch_edges = [
+        e
+        for e in wf.edges
+        if getattr(e.to_node, "name", "") == "_dispatch_caller_0"
+    ]
+    assert len(dispatch_edges) == 1
+    assert getattr(dispatch_edges[0].from_node, "name", "") == "caller_success_gate"
+
+
+def test_error_router_matches_typed_regex_wildcard_and_default(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: error_match_order
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call, retry: {max_retries: 1}}
+          success: {model: m, instruction: success}
+          handle_timeout: {model: m, instruction: timeout}
+          handle_rate: {model: m, instruction: rate}
+          handle_any: {model: m, instruction: any}
+          handle_other: {model: m, instruction: other}
+        workflow:
+          nodes: [caller, success, handle_timeout, handle_rate, handle_any, handle_other]
+          edges:
+            - from: caller
+              to: success
+            - from: caller
+              to: handle_timeout
+              on_error: true
+              error_type: TimeoutError
+            - from: caller
+              to: handle_rate
+              on_error: true
+              error_match: "rate.?limit"
+            - from: caller
+              to: handle_any
+              on_error: true
+            - from: caller
+              to: handle_other
+              on_error: true
+              condition: default
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+    router = _node_by_name(wf, "caller_error_router")
+
+    timeout_route = asyncio.run(_run_node_route(
+        router,
+        {"_error_caller": {"error_type": "TimeoutError", "error_message": "timed out"}},
+    ))
+    rate_route = asyncio.run(_run_node_route(
+        router,
+        {"_error_caller": {"error_type": "HTTPError", "error_message": "rate limit"}},
+    ))
+    wildcard_route = asyncio.run(_run_node_route(
+        router,
+        {"_error_caller": {"error_type": "ValueError", "error_message": "bad"}},
+    ))
+
+    assert timeout_route == "_error_0"
+    assert rate_route == "_error_1"
+    assert wildcard_route == "_error_2"
+
+
+def test_error_router_uses_default_when_no_error_edge_matches(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: error_default
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call, retry: {max_retries: 1}}
+          success: {model: m, instruction: success}
+          handle_timeout: {model: m, instruction: timeout}
+          handle_other: {model: m, instruction: other}
+        workflow:
+          nodes: [caller, success, handle_timeout, handle_other]
+          edges:
+            - from: caller
+              to: success
+            - from: caller
+              to: handle_timeout
+              on_error: true
+              error_type: TimeoutError
+            - from: caller
+              to: handle_other
+              on_error: true
+              condition: default
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+    router = _node_by_name(wf, "caller_error_router")
+
+    route = asyncio.run(_run_node_route(
+        router,
+        {"_error_caller": {"error_type": "ValueError", "error_message": "bad"}},
+    ))
+
+    assert route == "_error_1"

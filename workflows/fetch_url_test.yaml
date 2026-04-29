@@ -1,0 +1,25 @@
+name: fetch_url_test
+description: Minimal workflow for testing the builtin fetch_url tool.
+
+models:
+  local_fast:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+tools:
+  fetch:
+    type: builtin
+    name: fetch_url
+
+agents:
+  fetcher:
+    model: local_fast
+    mode: chat
+    instruction_file: prompts.fetch_url_test__fetcher
+    tools: [fetch]
+
+workflow:
+  nodes:
+    - fetcher
+  edges: []
+  entry: fetcher

@@ -50,9 +50,10 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     model_registry = build_model_registry(cfg.models)
     tool_registry = build_tool_registry(cfg.tools)
     skill_registry = build_skill_registry(cfg.skills)
+    error_src_names = {e.from_ for e in cfg.workflow.edges if e.on_error}
 
     node_callables = _build_node_callables(
-        cfg, model_registry, tool_registry, skill_registry
+        cfg, model_registry, tool_registry, skill_registry, error_src_names
     )
 
     adk_edges: list[Any] = []
@@ -72,20 +73,18 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     # Each gets a dispatcher node injected between src and all candidate nodes.
     all_workflow_node_names = list(node_callables.keys())
     static_edges: list[EdgeConfig] = []
-    for edge_cfg in expanded_edges:
+    for dispatch_idx, edge_cfg in enumerate(expanded_edges):
         if isinstance(edge_cfg.to, str) and _is_dynamic_to(edge_cfg.to):
-            src_node = node_callables[edge_cfg.from_]
             candidate_names = (
                 edge_cfg.allowed_targets
                 if edge_cfg.allowed_targets is not None
                 else all_workflow_node_names
             )
+            dispatch_key = f"_dispatch_{edge_cfg.from_}_{dispatch_idx}"
             dispatch_node = _build_dispatch_node(
-                edge_cfg.from_, edge_cfg.to, candidate_names
+                edge_cfg.from_, edge_cfg.to, candidate_names, dispatch_key
             )
-            dispatch_key = f"_dispatch_{edge_cfg.from_}"
             node_callables[dispatch_key] = dispatch_node
-            adk_edges.append(Edge(from_node=src_node, to_node=dispatch_node))
             for cand_name in candidate_names:
                 if cand_name in node_callables:
                     adk_edges.append(
@@ -95,6 +94,11 @@ def build_workflow(cfg: RootConfig) -> Workflow:
                             route=cand_name,
                         )
                     )
+            static_edges.append(
+                edge_cfg.model_copy(
+                    update={"to": dispatch_key, "allowed_targets": None}
+                )
+            )
         else:
             static_edges.append(edge_cfg)
 
@@ -107,7 +111,7 @@ def build_workflow(cfg: RootConfig) -> Workflow:
 
     # Group ALL edges by source node.
     all_edges_by_src: dict[str, list] = defaultdict(list)
-    for edge_cfg in expanded_edges:
+    for edge_cfg in static_edges:
         all_edges_by_src[edge_cfg.from_].append(edge_cfg)
 
     # Group normal-only edges by source (for nodes WITHOUT on_error edges).
@@ -199,19 +203,81 @@ def build_workflow(cfg: RootConfig) -> Workflow:
         src_normal = [e for e in src_all_edges if not e.on_error]
         src_errors = [e for e in src_all_edges if e.on_error]
 
-        # Build a unified error-aware router.
         error_router = _build_unified_error_router(
-            src_name, src_normal, src_errors,
+            src_name, src_errors,
         )
         adk_edges.append(Edge(from_node=src_node, to_node=error_router))
 
-        # Normal targets get _ok_N routes.
-        for i, edge_cfg in enumerate(src_normal):
-            assert isinstance(edge_cfg.to, str)
-            dst = node_callables[edge_cfg.to]
+        if src_normal:
+            success_gate = _build_success_gate_node(src_name)
             adk_edges.append(
-                Edge(from_node=error_router, to_node=dst, route=f"_ok_{i}")
+                Edge(from_node=error_router, to_node=success_gate, route="_ok")
             )
+
+            conditional = [e for e in src_normal if e.condition is not None]
+            unconditional = [e for e in src_normal if e.condition is None]
+
+            for edge_cfg in unconditional:
+                assert isinstance(edge_cfg.to, str)
+                dst = node_callables[edge_cfg.to]
+                adk_edges.append(Edge(from_node=success_gate, to_node=dst))
+
+            if conditional:
+                loop_configs: dict[int, LoopConfig] = {}
+                for i, edge_cfg in enumerate(conditional):
+                    if edge_cfg.loop is not None:
+                        loop_configs[i] = edge_cfg.loop
+
+                dst_to_route: dict[str, str] = {}
+                for i, edge_cfg in enumerate(conditional):
+                    assert isinstance(edge_cfg.to, str)
+                    if edge_cfg.to not in dst_to_route:
+                        dst_to_route[edge_cfg.to] = f"_route_{i}"
+
+                idx_to_route: dict[int, str] = {
+                    i: dst_to_route[edge_cfg.to]
+                    for i, edge_cfg in enumerate(conditional)
+                    if isinstance(edge_cfg.to, str)
+                }
+
+                exhausted_route_map: dict[int, str] = {}
+                for i, loop_cfg in loop_configs.items():
+                    if loop_cfg.on_exhausted is not None:
+                        if loop_cfg.on_exhausted in dst_to_route:
+                            exhausted_route_map[i] = dst_to_route[loop_cfg.on_exhausted]
+                        else:
+                            exhausted_route_map[i] = f"_exhausted_{i}"
+
+                router = _build_router_node(
+                    src_name, conditional, loop_configs, exhausted_route_map,
+                    idx_to_route,
+                )
+                adk_edges.append(Edge(from_node=success_gate, to_node=router))
+
+                seen_dsts: set[str] = set()
+                for i, edge_cfg in enumerate(conditional):
+                    assert isinstance(edge_cfg.to, str)
+                    if edge_cfg.to in seen_dsts:
+                        continue
+                    seen_dsts.add(edge_cfg.to)
+                    dst = node_callables[edge_cfg.to]
+                    adk_edges.append(
+                        Edge(from_node=router, to_node=dst, route=idx_to_route[i])
+                    )
+
+                for i, route_label in exhausted_route_map.items():
+                    loop_cfg = loop_configs[i]
+                    if loop_cfg.on_exhausted is not None:
+                        if loop_cfg.on_exhausted in dst_to_route:
+                            continue
+                        exhausted_dst = node_callables[loop_cfg.on_exhausted]
+                        adk_edges.append(
+                            Edge(
+                                from_node=router,
+                                to_node=exhausted_dst,
+                                route=route_label,
+                            )
+                        )
 
         # Error targets get _error_N routes.
         for i, edge_cfg in enumerate(src_errors):
@@ -332,6 +398,7 @@ def _build_dispatch_node(
     src_name: str,
     to_template: str,
     candidate_names: list[str],
+    node_name: str,
 ) -> Any:
     """Build a @node that resolves a template destination from state at runtime.
 
@@ -340,8 +407,6 @@ def _build_dispatch_node(
     ``AdkEvent(route=resolved_name)``.  The caller wires one ``Edge`` per
     candidate so ADK can route to it.
     """
-    node_name = f"_dispatch_{src_name}"
-
     async def _dispatch(ctx: Any, node_input: Any):
         state_dict = (
             ctx.state.to_dict()
@@ -511,9 +576,26 @@ def _error_edge_matches(edge: EdgeConfig, err_type: str, err_msg: str) -> bool:
     return type_ok and match_ok
 
 
+def _build_success_gate_node(src_name: str) -> Any:
+    """Build a pass-through node used after error-aware routing succeeds."""
+    node_name = f"{src_name}_success_gate"
+
+    async def _success_gate(ctx: Any, node_input: Any):
+        state_dict = (
+            ctx.state.to_dict()
+            if hasattr(ctx.state, "to_dict")
+            else dict(ctx.state)
+        )
+        yield AdkEvent(output=state_dict.get(src_name, ""))
+
+    _success_gate.__name__ = node_name
+    _success_gate.__qualname__ = node_name
+
+    return adk_node()(_success_gate)
+
+
 def _build_unified_error_router(
     src_name: str,
-    normal_edges: list[EdgeConfig],
     error_edges: list[EdgeConfig],
 ) -> Any:
     """Build a @node that routes to success OR error handlers.
@@ -523,7 +605,8 @@ def _build_unified_error_router(
     An edge with neither field is a wildcard that matches any error.
     ``condition: default`` edges are evaluated last regardless of order.
 
-    On success, routes to normal handlers via ``_ok_N``.
+    On success, routes to the internal success gate via ``_ok``. The success
+    gate then preserves the source's normal routing semantics.
     """
     # Separate default error edge (condition == __DEFAULT__) from typed/wildcard ones.
     typed_error_edges: list[tuple[int, EdgeConfig]] = []
@@ -573,11 +656,11 @@ def _build_unified_error_router(
             )
         else:
             logger.info(
-                "error_router '%s': no error → routing to success handler",
+                "error_router '%s': no error → routing to success gate",
                 src_name,
             )
             raw_output = state_dict.get(src_name, "")
-            yield AdkEvent(route="_ok_0", output=raw_output)
+            yield AdkEvent(route="_ok", output=raw_output)
 
     _error_router.__name__ = f"{src_name}_error_router"
     _error_router.__qualname__ = f"{src_name}_error_router"
@@ -664,6 +747,7 @@ def _build_node_callables(
     model_registry: dict,
     tool_registry: dict,
     skill_registry: dict,
+    error_src_names: set[str],
 ) -> dict[str, Any]:
     # Collect all names that appear as sub-agents.
     all_sub_agent_names: set[str] = set()
@@ -703,7 +787,7 @@ def _build_node_callables(
             # Build as a @node-wrapped workflow node.
             node = build_agent_node(
                 agent_name, agent_cfg, model, tools, resolved_sub_agents,
-                skill_toolset,
+                skill_toolset, agent_name in error_src_names,
             )
             built_agents[agent_name] = node
             callables[agent_name] = node
