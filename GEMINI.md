@@ -22,6 +22,7 @@ A modular framework for designing and orchestrating complex agentic workflows wi
     - `tools/`: Registry for built-in and custom tools.
     - `workflow/`: Logic for building the ADK `Workflow` from YAML config (`builder.py`).
 - `skills/`: Example local skill directories (importable via dotted ref).
+- `ai_skills/`: Task-specific instructional skills for AI coding assistants (Gemini CLI, Claude Code).
 - `tests/`: Comprehensive test suite using `pytest`.
 - `workflows/`: Example YAML workflow definitions.
 
