@@ -267,6 +267,32 @@ class AgentConfig(BaseModel):
         return self
 
 
+class A2aAgentConfig(BaseModel):
+    """Remote A2A agent declared in YAML."""
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["a2a"]
+    agent_card: str = Field(
+        description=(
+            "URL to a remote agent card or local path to an agent card "
+            "JSON file."
+        )
+    )
+    description: str = ""
+    output_key: Optional[str] = None
+    timeout_seconds: float = Field(default=600.0, gt=0)
+    full_history_when_stateless: bool = False
+    use_legacy: bool = True
+
+    @model_validator(mode="after")
+    def _expand(self) -> "A2aAgentConfig":
+        self.agent_card = _expand_env(
+            self.agent_card,
+            context="a2a agent_card",
+        )
+        return self
+
+
 class NodeRefConfig(BaseModel):
     type: Literal["node"]
     ref: str
@@ -274,7 +300,7 @@ class NodeRefConfig(BaseModel):
 
 
 NodeEntry = Annotated[
-    Union[AgentConfig, NodeRefConfig],
+    Union[AgentConfig, A2aAgentConfig, NodeRefConfig],
     Field(discriminator="type"),
 ]
 
@@ -619,10 +645,14 @@ class RootConfig(BaseModel):
                             f"agent '{agent_name}' references sub_agent '{sa_name}' "
                             f"which is not defined in agents"
                         )
-                    if not isinstance(self.agents[sa_name], AgentConfig):
+                    if not isinstance(
+                        self.agents[sa_name],
+                        (AgentConfig, A2aAgentConfig),
+                    ):
                         raise ValueError(
                             f"agent '{agent_name}' references sub_agent '{sa_name}' "
-                            f"which must be an agent (type: agent), not a node ref"
+                            "which must be an agent (type: agent or "
+                            "type: a2a), not a node ref"
                         )
                     all_sub_agent_names.add(sa_name)
 

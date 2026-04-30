@@ -167,6 +167,15 @@ agents:
     type: node                    # escape hatch for non-LLM logic
     ref: pkg.module.MyBaseNode    # importable BaseNode subclass or @node function
 
+  <remote_agent_name>:
+    type: a2a
+    agent_card: https://remote.example.com/.well-known/agent.json
+    description: "What the remote A2A agent does"
+    output_key: remote_result     # optional; default: remote agent name
+    timeout_seconds: 600          # optional
+    full_history_when_stateless: false  # optional
+    use_legacy: true              # optional; ADK A2A compatibility mode
+
 workflow:
   nodes: [agent_a, agent_b, agent_c]   # all nodes that participate
   edges:
@@ -790,6 +799,41 @@ agents:
 **Lifecycle**: MCP connections are opened lazily on first use and closed automatically by the ADK Runner. No teardown code is required.
 
 See [`workflows/mcp_example.yaml`](workflows/mcp_example.yaml) for a runnable reference showing all three transports together.
+
+---
+
+## A2A Agents
+
+Remote agents that expose the Agent2Agent protocol can be declared directly in
+`agents:` with `type: a2a`. They can be workflow nodes or sub-agents of a
+coordinator.
+
+```yaml
+agents:
+  remote_researcher:
+    type: a2a
+    agent_card: "https://research.example.com/.well-known/agent.json"
+    description: "Remote research specialist."
+
+  coordinator:
+    model: smart
+    instruction: |
+      Use remote_researcher when the task requires outside research.
+    sub_agents: [remote_researcher]
+
+workflow:
+  nodes: [coordinator]
+  edges: []
+  entry: coordinator
+```
+
+`agent_card` may be a URL or a local JSON file path. `${VAR}` placeholders are
+expanded at load time. Install the optional A2A dependency before building a
+workflow that uses this type:
+
+```bash
+pip install "modular-agent-designer[a2a]"
+```
 
 ---
 

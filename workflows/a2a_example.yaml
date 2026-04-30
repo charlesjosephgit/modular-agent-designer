@@ -1,0 +1,27 @@
+name: a2a_example
+description: Call a remote A2A agent from a coordinator.
+
+models:
+  smart:
+    provider: ollama
+    model: ollama/gemma4:e4b
+
+agents:
+  remote_researcher:
+    type: a2a
+    agent_card: "http://127.0.0.1:9999/.well-known/agent-card.json"
+    description: "Remote research specialist."
+    output_key: remote_research
+
+  coordinator:
+    model: smart
+    instruction: |
+      Coordinate the task from the user.
+      Use remote_researcher when external research is needed.
+    sub_agents:
+      - remote_researcher
+
+workflow:
+  nodes: [coordinator]
+  edges: []
+  entry: coordinator

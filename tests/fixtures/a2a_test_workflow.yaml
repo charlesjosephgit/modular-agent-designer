@@ -1,0 +1,17 @@
+name: a2a_remote_fixture
+description: Test workflow that calls the local A2A echo fixture.
+
+models: {}
+
+agents:
+  echo_remote:
+    type: a2a
+    agent_card: "http://127.0.0.1:9999/.well-known/agent-card.json"
+    description: "Local test-only A2A echo agent."
+    output_key: echo_remote
+    timeout_seconds: 30
+
+workflow:
+  nodes: [echo_remote]
+  edges: []
+  entry: echo_remote

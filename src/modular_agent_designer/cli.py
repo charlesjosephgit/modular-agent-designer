@@ -261,7 +261,7 @@ def validate(yaml_path: str, skip_build: bool) -> None:
 
 
 def _echo_workflow_details(cfg: Any) -> None:
-    from .config.schema import AgentConfig, NodeRefConfig
+    from .config.schema import A2aAgentConfig, AgentConfig, NodeRefConfig
 
     click.echo(f"\nWorkflow: {cfg.name}")
     if cfg.description:
@@ -315,6 +315,10 @@ def _echo_workflow_details(cfg: Any) -> None:
                     f"delay={a.retry.delay_seconds}s)"
                 )
             click.echo(f"  {agent_name}{tag_str}: model={a.model}{mode_str}{tool_str}{sub_str}{retry_str}")
+        elif isinstance(a, A2aAgentConfig):
+            click.echo(
+                f"  {agent_name}{tag_str}: a2a agent_card={a.agent_card}"
+            )
         elif isinstance(a, NodeRefConfig):
             click.echo(f"  {agent_name}{tag_str}: custom node ref={a.ref}")
 

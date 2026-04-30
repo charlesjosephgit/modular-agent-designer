@@ -12,6 +12,7 @@ from google.adk.events.event import Event as AdkEvent
 from google.adk.workflow import Edge, START, node as adk_node
 
 from ..config.schema import (
+    A2aAgentConfig,
     AgentConfig,
     EdgeConfig,
     EvalCondition,
@@ -22,6 +23,7 @@ from ..config.schema import (
 )
 from ..state.template import resolve as resolve_template
 from ..models.registry import build_model_registry
+from ..nodes.a2a import build_a2a_agent_node, build_remote_a2a_agent
 from ..nodes.agent_node import build_agent_node, build_sub_agent
 from ..nodes.custom import build_custom_node
 from ..skills.registry import build_skill_registry, build_skill_toolset
@@ -909,6 +911,17 @@ def _build_node_callables(
         if isinstance(agent_cfg, NodeRefConfig):
             node = build_custom_node(agent_name, agent_cfg)
             callables[agent_name] = node
+            continue
+
+        if isinstance(agent_cfg, A2aAgentConfig):
+            if agent_name in all_sub_agent_names:
+                built_agents[agent_name] = build_remote_a2a_agent(
+                    agent_name, agent_cfg
+                )
+            else:
+                node = build_a2a_agent_node(agent_name, agent_cfg)
+                built_agents[agent_name] = node
+                callables[agent_name] = node
             continue
 
         # AgentConfig path.

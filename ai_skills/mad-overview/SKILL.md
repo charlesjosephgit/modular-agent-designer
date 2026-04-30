@@ -103,6 +103,12 @@ agents:
     type: node                                # custom BaseNode escape hatch
     ref: mypackage.nodes.RouterNode
 
+  remote_researcher:
+    type: a2a                                 # remote Agent2Agent protocol agent
+    agent_card: https://remote.example.com/.well-known/agent.json
+    description: "Remote research specialist."
+    output_key: remote_result
+
 workflow:
   nodes: [researcher, writer]
   entry: researcher
@@ -171,6 +177,21 @@ thinking:
 | `include_contents` | string | No | `default` or `none`; `none` strips conversation history from the context |
 | `type` | string | No | `"node"` for custom BaseNode escape hatch |
 | `ref` | string | No | Dotted path to BaseNode subclass (when `type: node`) |
+
+### A2A Agent Fields
+
+Use `type: a2a` to call a remote Agent2Agent protocol agent from YAML. The
+entry can be a workflow node or a sub-agent referenced by a coordinator.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | string | Yes | Must be `a2a`. |
+| `agent_card` | string | Yes | URL or local JSON path for the remote agent card; supports `${VAR}` env expansion. |
+| `description` | string | No | Shown to parent agents for delegation decisions. |
+| `output_key` | string | No | State key to write remote text output to; default is the agent name. |
+| `timeout_seconds` | float | No | HTTP/client timeout; default 600. |
+| `full_history_when_stateless` | bool | No | Forward full history to stateless remote agents. |
+| `use_legacy` | bool | No | ADK A2A compatibility mode; default true. |
 
 ### `generate_content_config` fields
 

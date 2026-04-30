@@ -33,7 +33,7 @@ def _edge_label(condition) -> str | None:
 
 
 def render_mermaid(cfg: "RootConfig") -> str:
-    from ..config.schema import AgentConfig, NodeRefConfig
+    from ..config.schema import A2aAgentConfig, AgentConfig, NodeRefConfig
 
     lines: list[str] = ["flowchart TD"]
 
@@ -53,6 +53,8 @@ def render_mermaid(cfg: "RootConfig") -> str:
             if entry.retry is not None:
                 label += f" · retry×{entry.retry.max_retries}"
             lines.append(f'    {safe_name}["{label}"]')
+        elif isinstance(entry, A2aAgentConfig):
+            lines.append(f'    {safe_name}["{node_name}<br/>(A2A)"]')
         elif isinstance(entry, NodeRefConfig):
             ref = _sanitize(entry.ref)
             lines.append(f'    {safe_name}{{{{"{node_name}<br/>({ref})"}}}}')
@@ -73,6 +75,8 @@ def render_mermaid(cfg: "RootConfig") -> str:
                     if sub_entry.mode:
                         label += f" · {sub_entry.mode}"
                     lines.append(f'        {sub}["{label}"]')
+                elif isinstance(sub_entry, A2aAgentConfig):
+                    lines.append(f'        {sub}["{sub}<br/>(A2A)"]')
                 else:
                     lines.append(f'        {sub}["{sub}"]')
             lines.append("    end")
