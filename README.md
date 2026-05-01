@@ -53,6 +53,12 @@ The `create` command generates `my_agent/` containing:
 modular-agent-designer create <agent-name> [--dir <parent>] [--force]
 ```
 
+You can also use the short alias `mad`, for example:
+
+```bash
+mad create my_agent
+```
+
 ### Run an existing example
 
 ```bash
@@ -984,10 +990,13 @@ if __name__ == "__main__":
 
 ## CLI Reference
 
+`mad` is a short alias for `modular-agent-designer`; both commands expose the same CLI.
+
 ### `create` — scaffold a new agent project
 
 ```
 modular-agent-designer create <agent_name> [--dir <parent>] [--force]
+mad create <agent_name> [--dir <parent>] [--force]
 ```
 
 - `agent_name` — name of the agent folder to create; must be a valid Python identifier

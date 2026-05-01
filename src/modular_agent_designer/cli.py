@@ -1,4 +1,4 @@
-"""CLI entry point: `modular-agent-designer run <yaml> --input '<json>'`."""
+"""CLI entry point: `modular-agent-designer run <yaml> --input '<data>'`."""
 from __future__ import annotations
 
 import asyncio
@@ -76,6 +76,14 @@ def _format_event_output(output: Any) -> str:
     return str(output)
 
 
+def _parse_workflow_input(raw_input: str) -> Any:
+    """Parse JSON input when possible, otherwise treat the input as plain text."""
+    try:
+        return json.loads(raw_input)
+    except json.JSONDecodeError:
+        return raw_input
+
+
 @click.group()
 @click.version_option(version=_package_version(), prog_name="modular-agent-designer")
 def main() -> None:
@@ -89,7 +97,7 @@ def main() -> None:
     "input_json",
     default=None,
     help=(
-        "JSON object passed as the workflow input "
+        "JSON value or plain string passed as the workflow input "
         "(available as state.user_input)."
     ),
 )
@@ -99,7 +107,7 @@ def main() -> None:
     default=None,
     metavar="PATH",
     help=(
-        "Path to a JSON file to use as workflow input. "
+        "Path to a JSON or text file to use as workflow input. "
         "Use '-' to read from stdin."
     ),
 )
@@ -139,7 +147,7 @@ def run(
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Run a workflow defined in YAML_PATH with --input JSON or --input-file PATH."""
+    """Run a workflow defined in YAML_PATH with --input DATA or --input-file PATH."""
     if log_level is not None or verbose:
         effective_level = log_level.upper() if log_level is not None else "INFO"
         logging.basicConfig(
@@ -181,20 +189,9 @@ def run(
 
         setup_tracing(mlflow_experiment_id)
 
-    input_data: dict[str, Any] = {}
+    input_data: Any = {}
     if raw_input is not None:
-        try:
-            _parsed = json.loads(raw_input)
-        except json.JSONDecodeError as exc:
-            click.echo(f"Error: input is not valid JSON: {exc}", err=True)
-            sys.exit(1)
-        if not isinstance(_parsed, dict):
-            click.echo(
-                f"Error: input must be a JSON object, got {type(_parsed).__name__}",
-                err=True,
-            )
-            sys.exit(1)
-        input_data = _parsed
+        input_data = _parse_workflow_input(raw_input)
 
     try:
         cfg = load_workflow(yaml_path)
@@ -472,7 +469,7 @@ def diagram(yaml_path: str, output_path: str | None) -> None:
 
 
 async def _run_workflow(
-    workflow, input_data: dict[str, Any], max_llm_calls: int = 20
+    workflow, input_data: Any, max_llm_calls: int = 20
 ) -> dict[str, Any]:
     session_service = InMemorySessionService()
 
@@ -492,7 +489,13 @@ async def _run_workflow(
 
     new_message = types.Content(
         role="user",
-        parts=[types.Part(text=json.dumps(input_data))],
+        parts=[
+            types.Part(
+                text=input_data
+                if isinstance(input_data, str)
+                else json.dumps(input_data)
+            )
+        ],
     )
 
     async for event in runner.run_async(

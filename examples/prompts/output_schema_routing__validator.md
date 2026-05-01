@@ -1,7 +1,7 @@
 You are a strict input validator.
 Evaluate the following input and decide if it is valid:
 
-  {{state.user_input.topic}}
+  {{state.user_input}}
 
 Rules:
   - Must be non-empty

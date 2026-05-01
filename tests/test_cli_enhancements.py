@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import tomllib
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import click
 import pytest
@@ -11,7 +13,12 @@ from click.testing import CliRunner
 from google.adk.events.event import Event
 from google.genai import types
 
-from modular_agent_designer.cli import _is_public_state_key, _printable_event_chunks, main
+from modular_agent_designer.cli import (
+    _is_public_state_key,
+    _parse_workflow_input,
+    _printable_event_chunks,
+    main,
+)
 
 _VALID_YAML = textwrap.dedent("""\
     name: hello
@@ -83,6 +90,13 @@ def test_top_level_version_option() -> None:
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
     assert "modular-agent-designer" in result.output
+
+
+def test_pyproject_defines_mad_console_alias() -> None:
+    data = tomllib.loads(Path("pyproject.toml").read_text())
+    scripts = data["project"]["scripts"]
+    assert scripts["modular-agent-designer"] == "modular_agent_designer.cli:main"
+    assert scripts["mad"] == "modular_agent_designer.cli:main"
 
 
 def test_run_dry_run_does_not_require_input(tmp_path: Path) -> None:
@@ -332,6 +346,70 @@ def test_run_stdin_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert "mutually exclusive" not in result.output
     assert "required" not in result.output
+
+
+def test_parse_workflow_input_accepts_json_or_plain_string() -> None:
+    assert _parse_workflow_input('{"topic": "json"}') == {"topic": "json"}
+    assert _parse_workflow_input("plain text request") == "plain text request"
+    assert _parse_workflow_input('"quoted json string"') == "quoted json string"
+
+
+def test_run_accepts_plain_string_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "load_workflow",
+        lambda yaml_path: SimpleNamespace(
+            name="hello",
+            workflow=SimpleNamespace(max_llm_calls=20),
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "build_workflow", lambda cfg: object())
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20):
+        return {"user_input": input_data}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--input", "plain text request"])
+
+    assert result.exit_code == 0
+    assert '"user_input": "plain text request"' in result.output
+
+
+def test_run_input_file_accepts_plain_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    inp = tmp_path / "input.txt"
+    inp.write_text("plain text from file", encoding="utf-8")
+
+    import modular_agent_designer.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "load_workflow",
+        lambda yaml_path: SimpleNamespace(
+            name="hello",
+            workflow=SimpleNamespace(max_llm_calls=20),
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "build_workflow", lambda cfg: object())
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20):
+        return {"user_input": input_data}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--input-file", str(inp)])
+
+    assert result.exit_code == 0
+    assert '"user_input": "plain text from file"' in result.output
 
 
 def test_run_prints_streamed_events_before_final_state(

@@ -26,6 +26,7 @@ def test_create_generates_expected_files():
         assert (folder / "__init__.py").exists()
         assert (folder / "README.md").exists()
         assert (folder / "tools" / "__init__.py").exists()
+        assert (folder / "skills" / "__init__.py").exists()
         assert (folder / "prompts" / "__init__.py").exists()
         assert (folder / "prompts" / "demo_agent__responder.md").exists()
         assert (folder / "schemas" / "__init__.py").exists()
@@ -111,6 +112,17 @@ def test_create_tools_init_content():
         assert "demo.yaml" in tools_init
         assert "type: python" in tools_init
         assert "ref:" in tools_init
+
+
+def test_create_skills_init_content():
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        runner.invoke(main, ["create", "demo"], catch_exceptions=False)
+        skills_init = Path("demo/skills/__init__.py").read_text()
+        assert "skills/__init__.py" in skills_init
+        assert "SKILL.md" in skills_init
+        assert "demo.skills.support_triage" in skills_init
+        assert "skills: [support_triage]" in skills_init
 
 
 def test_create_success_message_shows_next_steps():

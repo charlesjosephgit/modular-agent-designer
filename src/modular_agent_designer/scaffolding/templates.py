@@ -124,6 +124,33 @@ _TOOLS_INIT_PY = """\
 #       tools: [web_search]
 """
 
+_SKILLS_INIT_PY = """\
+# skills/__init__.py
+#
+# Place custom skill packages for this agent in this directory.
+#
+# A skill is a folder that contains a SKILL.md file. Use skills for reusable
+# instructions, workflows, or domain-specific guidance that agents can load by
+# reference from the YAML.
+#
+# Example layout:
+#
+#   skills/
+#     support_triage/
+#       SKILL.md
+#
+# Then wire it in {name}.yaml:
+#
+#   skills:
+#     support_triage:
+#       ref: {name}.skills.support_triage
+#
+#   agents:
+#     responder:
+#       model: local
+#       skills: [support_triage]
+"""
+
 _README = """\
 # {name}
 
@@ -144,7 +171,7 @@ uv run modular-agent-designer run {name}/{name}.yaml --input '{{"message": "hell
 
 ## Customise
 
-Edit `{name}.yaml` to change the model, add tools, or build a multi-agent graph.
+Edit `{name}.yaml` to change the model, add tools, add skills, or build a multi-agent graph.
 See the [full docs](https://github.com/charlesjosephgit/modular-agent-designer) for the complete YAML schema.
 """
 
@@ -157,6 +184,7 @@ def render(name: str) -> dict[str, str]:
         "__init__.py": _INIT_PY,
         "README.md": _README.format(name=name),
         "tools/__init__.py": _TOOLS_INIT_PY.format(name=name),
+        "skills/__init__.py": _SKILLS_INIT_PY.format(name=name),
         "prompts/__init__.py": _PROMPTS_INIT_PY.format(name=name),
         f"prompts/{name}__responder.md": _PROMPTS_SAMPLE_TXT,
         "schemas/__init__.py": _SCHEMAS_INIT_PY.format(name=name),

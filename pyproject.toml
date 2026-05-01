@@ -1,6 +1,6 @@
 [project]
 name = "modular-agent-designer"
-version = "0.7.3"
+version = "0.7.4"
 description = "A modular framework for designing and orchestrating complex agentic workflows with ease."
 readme = "PYPI_README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 modular-agent-designer = "modular_agent_designer.cli:main"
+mad = "modular_agent_designer.cli:main"
 
 [project.optional-dependencies]
 a2a = [
