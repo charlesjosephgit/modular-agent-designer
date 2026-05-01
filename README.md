@@ -177,6 +177,8 @@ models:
   local:
     provider: ollama
     model: ollama/gemma4:e4b
+    thinking:
+      reasoning_effort: high
 
   writer_model:
     provider: openai
@@ -191,6 +193,11 @@ Supported provider prefixes:
 | Anthropic | `anthropic/` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `gemini/` | `GOOGLE_API_KEY` |
 | OpenAI | `openai/` | `OPENAI_API_KEY` |
+
+The optional `thinking` field passes provider-specific reasoning settings to
+the model. Use `reasoning_effort` for providers that support effort levels, or
+Gemini-style fields such as `thinking_budget` and `include_thoughts` when
+needed.
 
 ### Tools
 
