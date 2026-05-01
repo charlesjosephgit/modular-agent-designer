@@ -137,7 +137,7 @@ agents:
 ```
 
 - `instruction_file` takes a dotted ref: dots → path separators, `.md` appended automatically.
-- Resolved from the project root (cwd), so `prompts.my_workflow__researcher` → `<cwd>/prompts/my_workflow__researcher.md`.
+- Resolved from the project root (cwd), the YAML directory, or the YAML directory's parent, so `prompts.my_workflow__researcher` can point at `prompts/my_workflow__researcher.md` next to the workflow or next to a `workflows/` directory.
 - The scaffolder creates `prompts/` with an `__init__.py` and a sample `.md` to start from.
 - `instruction` and `instruction_file` are mutually exclusive. Both are optional — omit when the agent uses `static_instruction` alone or receives its prompt via delegation.
 
@@ -436,5 +436,5 @@ uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{
 | `condition: default` with no other edges from that source | Works but unnecessary | Remove it for a clean unconditional edge |
 | Sub-agent listed in `workflow.nodes` | Pydantic error: sub-agents must not be workflow nodes | Remove it from `nodes:` |
 | `instruction_file: ../prompts/file.md` (old path style) | `ValueError: not a valid dotted ref` at load time | Use dotted syntax: `instruction_file: prompts.my_workflow__agent` |
-| `instruction_file` path not found | `ValueError: instruction_file not found: <path>` | Run CLI from project root; file must be at `<cwd>/prompts/…` |
+| `instruction_file` path not found | `ValueError: instruction_file not found: <path>` | Put the file in `prompts/` under cwd, beside the YAML, or beside the YAML directory |
 | Both `instruction:` and `instruction_file:` set | `ValueError: not both` at load time | Remove one; they are mutually exclusive |

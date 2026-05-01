@@ -220,9 +220,10 @@ class AgentConfig(BaseModel):
     instruction_file: Optional[str] = Field(
         default=None,
         description=(
-            "Dotted ref to a prompt file resolved from cwd, e.g. "
+            "Dotted ref to a prompt file resolved from cwd, the YAML directory, "
+            "or the YAML directory's parent, e.g. "
             "'prompts.my_workflow__my_agent' → "
-            "<cwd>/prompts/my_workflow__my_agent.md"
+            "prompts/my_workflow__my_agent.md"
         ),
     )
     static_instruction: Optional[str] = None

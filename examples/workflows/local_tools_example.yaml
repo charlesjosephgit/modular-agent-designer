@@ -47,7 +47,7 @@ tools:
 agents:
   text_analyst:
     model: local
-    instruction_file: examples.prompts.local_tools_example__text_analyst
+    instruction_file: prompts.local_tools_example__text_analyst
     tools: [word_count, extract_keywords, summarize_stats]
 
 workflow:

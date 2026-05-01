@@ -24,7 +24,7 @@ tools: {{}}
 agents:
   responder:
     model: local
-    instruction_file: {name}.prompts.{name}__responder
+    instruction_file: prompts.{name}__responder
 
 workflow:
   entry: responder
@@ -51,10 +51,11 @@ _PROMPTS_INIT_PY = """\
 #
 #   agents:
 #     responder:
-#       instruction_file: {name}.prompts.{name}__responder
+#       instruction_file: prompts.{name}__responder
 #
 # Dots are folder separators; .md is appended automatically.
-# The path is resolved from the project root (cwd where the CLI runs).
+# The path is resolved from the project root (cwd), the YAML directory,
+# or the YAML directory's parent.
 #
 # {{{{state.x}}}} and {{{{state.x.y.z}}}} template syntax works inside prompt
 # files — resolved at node-execution time, not load time.

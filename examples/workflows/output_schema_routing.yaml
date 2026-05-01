@@ -17,11 +17,11 @@ agents:
 
   process_node:
     model: fast
-    instruction_file: examples.prompts.output_schema_routing__process_node
+    instruction_file: prompts.output_schema_routing__process_node
 
   reject_node:
     model: fast
-    instruction_file: examples.prompts.output_schema_routing__reject_node
+    instruction_file: prompts.output_schema_routing__reject_node
 
 workflow:
   entry: validator

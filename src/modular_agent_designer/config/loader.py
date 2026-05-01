@@ -22,7 +22,9 @@ def _dotted_ref_to_path(ref: str, base_dir: Path | None = None) -> Path:
     """Convert a dotted ref like 'prompts.my_agent' to a Path with .md suffix.
 
     Resolved from the current working directory first. If not found and
-    *base_dir* is provided, fall back to resolving relative to that directory.
+    *base_dir* is provided, fall back to resolving relative to that directory,
+    then relative to its parent. The parent fallback supports layouts like
+    ``examples/workflows/*.yaml`` with prompt files in ``examples/prompts``.
     """
     if not _DOTTED_REF_RE.match(ref):
         raise ValueError(
@@ -33,9 +35,10 @@ def _dotted_ref_to_path(ref: str, base_dir: Path | None = None) -> Path:
     cwd_path = Path.cwd().joinpath(*parts).with_suffix(".md")
     if cwd_path.exists() or base_dir is None:
         return cwd_path
-    base_path = base_dir.joinpath(*parts).with_suffix(".md")
-    if base_path.exists():
-        return base_path
+    for root in (base_dir, base_dir.parent):
+        base_path = root.joinpath(*parts).with_suffix(".md")
+        if base_path.exists():
+            return base_path
     return cwd_path
 
 

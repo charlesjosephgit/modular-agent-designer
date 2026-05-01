@@ -37,7 +37,7 @@ agents:
   researcher:
     model: local
     mode: task
-    instruction_file: examples.prompts.skills_example__researcher
+    instruction_file: prompts.skills_example__researcher
     skills: [summarizer]
 
 workflow:

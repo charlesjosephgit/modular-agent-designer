@@ -248,6 +248,30 @@ def test_instruction_file_prefers_cwd_over_yaml_directory(
     assert agent.instruction == "Hello from cwd."
 
 
+def test_instruction_file_falls_back_to_yaml_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "cwd"
+    project = tmp_path / "project"
+    workflows_dir = project / "workflows"
+    prompts_dir = project / "prompts"
+    cwd.mkdir()
+    workflows_dir.mkdir(parents=True)
+    prompts_dir.mkdir()
+    monkeypatch.chdir(cwd)
+    (prompts_dir / "my_prompt.md").write_text("Hello from YAML parent dir.")
+    yaml_text = _BASE_YAML.format(
+        instruction_field="instruction_file: prompts.my_prompt"
+    )
+    p = workflows_dir / "wf.yaml"
+    p.write_text(yaml_text)
+    cfg = load_workflow(p)
+    from modular_agent_designer.config.schema import AgentConfig
+    agent = cfg.agents["step_one"]
+    assert isinstance(agent, AgentConfig)
+    assert agent.instruction == "Hello from YAML parent dir."
+
+
 def test_instruction_file_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     yaml_text = _BASE_YAML.format(

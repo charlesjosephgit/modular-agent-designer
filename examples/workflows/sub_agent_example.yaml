@@ -15,12 +15,12 @@ agents:
   # mode: single_turn wraps each as a callable tool the coordinator can invoke.
   search_specialist:
     model: local_fast
-    instruction_file: examples.prompts.sub_agent_example__search_specialist
+    instruction_file: prompts.sub_agent_example__search_specialist
     mode: single_turn
 
   analysis_specialist:
     model: local_fast
-    instruction_file: examples.prompts.sub_agent_example__analysis_specialist
+    instruction_file: prompts.sub_agent_example__analysis_specialist
     mode: single_turn
 
   # Coordinator is the only workflow node.
@@ -28,7 +28,7 @@ agents:
   coordinator:
     model: local_fast
     mode: task
-    instruction_file: examples.prompts.sub_agent_example__coordinator
+    instruction_file: prompts.sub_agent_example__coordinator
     sub_agents:
       - search_specialist
       - analysis_specialist

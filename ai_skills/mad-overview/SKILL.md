@@ -158,7 +158,7 @@ thinking:
 | `model` | string | Yes | Must reference a key in `models:` |
 | `description` | string | No | Shown to the parent LLM to decide delegation — strongly recommended for sub-agents |
 | `instruction` | string | No | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time. Mutually exclusive with `instruction_file`. |
-| `instruction_file` | string | No | Dotted ref to a `.md` file resolved from cwd, e.g. `prompts.my_workflow__researcher`. Mutually exclusive with `instruction`. |
+| `instruction_file` | string | No | Dotted ref to a `.md` file resolved from cwd, the YAML directory, or the YAML directory's parent, e.g. `prompts.my_workflow__researcher`. Mutually exclusive with `instruction`. |
 | `static_instruction` | string | No | Cacheable static system content; never changes — ADK sends it to a cache-eligible position |
 | `static_instruction_file` | string | No | Dotted ref to a `.md` file containing the static instruction |
 | `tools` | list[string] | No | References to keys in `tools:` |

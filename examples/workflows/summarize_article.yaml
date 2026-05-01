@@ -12,13 +12,13 @@ agents:
   summarizer:
     model: local_fast
     output_schema: examples.schemas.article.ArticleSummary
-    instruction_file: examples.prompts.summarize_article__summarizer
+    instruction_file: prompts.summarize_article__summarizer
 
   recommender:
     model: local_fast
     mode: single_turn
     include_contents: none
-    instruction_file: examples.prompts.summarize_article__recommender
+    instruction_file: prompts.summarize_article__recommender
 
 workflow:
   nodes:

@@ -137,7 +137,7 @@ agents:
     instruction: |               # inline prompt (use for short, simple prompts)
       Template text with {{state.key}} or {{state.nested.key}} refs.
     # -- OR --
-    instruction_file: prompts.my_agent  # dotted ref → <cwd>/prompts/my_agent.md
+    instruction_file: prompts.my_agent  # dotted ref -> prompts/my_agent.md
     static_instruction: |        # optional; never changes — eligible for prompt caching
       You are a helpful assistant.
     # -- OR --
@@ -676,9 +676,9 @@ agents:
     instruction_file: prompts.research_assistant__researcher
 ```
 
-- Dots are folder separators; `.md` is appended automatically. The ref above resolves to `<cwd>/prompts/research_assistant__researcher.md`.
-- Resolution checks the **project root (cwd where the CLI runs)** first, then falls back to the YAML file's directory.
-- The recommended layout is a top-level `prompts/` directory at the repo root, with files named `<workflow>__<agent>.md`.
+- Dots are folder separators; `.md` is appended automatically. The ref above resolves to `prompts/research_assistant__researcher.md`.
+- Resolution checks the **project root (cwd where the CLI runs)** first, then falls back to the YAML file's directory and that directory's parent.
+- The recommended layout is a `prompts/` directory next to your workflow YAML, or next to a `workflows/` directory that contains the YAML files.
 - `{{state.x}}` and `{{state.x.y.z}}` template syntax works identically inside prompt files — resolved at node-execution time, not load time.
 - `instruction` and `instruction_file` are mutually exclusive. Both are optional — omit them when the agent relies entirely on `static_instruction` or receives its prompt via tool/sub-agent delegation.
 
