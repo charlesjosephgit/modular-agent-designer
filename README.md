@@ -315,6 +315,28 @@ Examples:
 - [`examples/workflows/switch_example.yaml`](examples/workflows/switch_example.yaml)
 - [`examples/workflows/dynamic_router.yaml`](examples/workflows/dynamic_router.yaml)
 
+### Switch/Case Routing
+
+Use `switch` when one state value should choose from several named routes. This
+keeps classifier-style workflows easier to scan than repeating one conditional
+edge per case.
+
+```yaml
+edges:
+  - from: classifier
+    switch: "{{state.classifier}}"
+    cases:
+      urgent: handle_urgent
+      normal: handle_normal
+      low: handle_low
+    default: handle_normal
+```
+
+The `switch` value can read from state with `{{state.key}}`. The optional
+`default` target handles values that do not match any case.
+
+Example: [`examples/workflows/switch_example.yaml`](examples/workflows/switch_example.yaml)
+
 ### Loops and Retries
 
 Use loops for intentional workflow cycles, such as draft-review-revise flows.
