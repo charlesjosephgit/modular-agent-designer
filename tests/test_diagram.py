@@ -10,7 +10,7 @@ from modular_agent_designer.cli import main
 from modular_agent_designer.config.loader import load_workflow
 from modular_agent_designer.visualize.mermaid import render_mermaid
 
-WORKFLOWS = Path(__file__).parent.parent / "workflows"
+WORKFLOWS = Path(__file__).parent.parent / "examples" / "workflows"
 
 
 def _render(filename: str) -> str:

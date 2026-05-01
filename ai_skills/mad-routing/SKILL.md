@@ -146,7 +146,7 @@ The `switch:` value accepts:
 - `default:` is optional — without it, unmatched output terminates the branch.
 - Each case target must be a known node in `workflow.nodes`.
 
-See [`workflows/switch_example.yaml`](../../workflows/switch_example.yaml) for a runnable example.
+See [`examples/workflows/switch_example.yaml`](../../examples/workflows/switch_example.yaml) for a runnable example.
 
 ---
 
@@ -176,7 +176,7 @@ workflow:
 - If the resolved name is not among the candidates, the workflow terminates with a logged error.
 - `loop:` is not compatible with dynamic `to:`.
 
-See [`workflows/dynamic_router.yaml`](../../workflows/dynamic_router.yaml) for a runnable example.
+See [`examples/workflows/dynamic_router.yaml`](../../examples/workflows/dynamic_router.yaml) for a runnable example.
 
 ---
 
@@ -347,7 +347,7 @@ The error info in state (`state._error_<agent_name>`):
 }
 ```
 
-See [`workflows/typed_errors.yaml`](../../workflows/typed_errors.yaml) for a runnable example.
+See [`examples/workflows/typed_errors.yaml`](../../examples/workflows/typed_errors.yaml) for a runnable example.
 
 ---
 
@@ -359,7 +359,7 @@ When an agent declares `output_schema:`, its output is a Pydantic model serializ
 agents:
   validator:
     model: smart
-    output_schema: schemas.validation.ValidationResult  # Pydantic v2 class
+    output_schema: examples.schemas.validation.ValidationResult  # Pydantic v2 class
     instruction: |
       Validate the user input: {{state.user_input.text}}
       Return a ValidationResult with is_valid and reason fields.
@@ -379,7 +379,7 @@ edges:
 - Use `state.get('key', {}).get('field')` — safe when field may be absent.
 - Switch sugar also works: `switch: {eval: "state.get('validator', {}).get('category', '')"}`.
 
-See [`workflows/output_schema_routing.yaml`](../../workflows/output_schema_routing.yaml) and [`schemas/validation.py`](../../schemas/validation.py) for a runnable example.
+See [`examples/workflows/output_schema_routing.yaml`](../../examples/workflows/output_schema_routing.yaml) and [`examples/schemas/validation.py`](../../examples/schemas/validation.py) for a runnable example.
 
 ---
 

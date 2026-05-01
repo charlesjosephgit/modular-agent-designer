@@ -1,30 +1,30 @@
-# Example: referencing a custom tool from the project-root tools/ directory.
+# Example: referencing a custom tool from the repository's examples/tools directory.
 #
-# The `tools/` package lives OUTSIDE the modular_agent_designer package —
+# The `examples/tools/` package lives OUTSIDE the modular_agent_designer package —
 # no changes to the framework are needed and no pip install is required.
 #
 # Layout expected when running from the project root:
 #
-#   tools/
+#   examples/tools/
 #     __init__.py          (empty)
 #     text_tools.py        (contains word_count, extract_keywords, summarize_stats)
-#   workflows/
+#   examples/workflows/
 #     local_tools_example.yaml   (this file)
 #
 # How it works:
 #   `modular-agent-designer` automatically adds the CWD and the YAML's
-#   directory to sys.path at startup, so `tools.text_tools` is importable
+#   directory to sys.path at startup, so `examples.tools.text_tools` is importable
 #   as long as you run the CLI from the project root.
 #
 # Run:
 #   uv run modular-agent-designer run \
-#     workflows/local_tools_example.yaml \
+#     examples/workflows/local_tools_example.yaml \
 #     --input '{"text": "The quick brown fox jumps over the lazy dog. AI agents are transforming how we build software pipelines."}'
 
 name: local_tools_demo
 description: >
-  Demonstrates referencing custom tool callables from a local tools/ directory
-  in the project root — no pip install required.
+  Demonstrates referencing custom tool callables from examples/tools —
+  no pip install required.
 
 models:
   local:
@@ -34,20 +34,20 @@ models:
 tools:
   word_count:
     type: python
-    ref: tools.text_tools.word_count
+    ref: examples.tools.text_tools.word_count
 
   extract_keywords:
     type: python
-    ref: tools.text_tools.extract_keywords
+    ref: examples.tools.text_tools.extract_keywords
 
   summarize_stats:
     type: python
-    ref: tools.text_tools.summarize_stats
+    ref: examples.tools.text_tools.summarize_stats
 
 agents:
   text_analyst:
     model: local
-    instruction_file: prompts.local_tools_example__text_analyst
+    instruction_file: examples.prompts.local_tools_example__text_analyst
     tools: [word_count, extract_keywords, summarize_stats]
 
 workflow:

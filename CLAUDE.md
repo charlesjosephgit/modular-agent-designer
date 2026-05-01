@@ -18,7 +18,7 @@ uv sync --extra telemetry --prerelease=allow        # MLflow/OTLP tracing
 
 # Run a workflow
 uv run modular-agent-designer run <yaml_path> --input '<json>'
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": "AI"}'
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{"topic": "AI"}'
 uv run modular-agent-designer run <yaml_path> --input '<json>' --mlflow <experiment_id>
 
 # Tests
@@ -67,4 +67,4 @@ YAML file
 
 - `README.md` — full user guide: YAML schema, branching/loops, custom nodes, library API, CLI reference.
 - `examples/client_run.py` — programmatic (non-CLI) usage example.
-- `workflows/` — YAML workflow examples (hello_world, conditional, research_assistant, mcp_example).
+- `examples/` — runnable example workflows plus their prompts, tools, schemas, and skills.

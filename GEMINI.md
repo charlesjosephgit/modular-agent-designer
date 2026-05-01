@@ -21,10 +21,11 @@ A modular framework for designing and orchestrating complex agentic workflows wi
     - `skills/`: Registry and built-in skills leveraging ADK's `SkillToolset`.
     - `tools/`: Registry for built-in and custom tools.
     - `workflow/`: Logic for building the ADK `Workflow` from YAML config (`builder.py`).
-- `skills/`: Example local skill directories (importable via dotted ref).
+- `examples/`: Shipped runnable examples.
+    - `workflows/`: Example YAML workflow definitions.
+    - `prompts/`, `tools/`, `schemas/`, `skills/`: Example assets referenced by those workflows.
 - `ai_skills/`: Task-specific instructional skills for AI coding assistants (Gemini CLI, Claude Code).
 - `tests/`: Comprehensive test suite using `pytest`.
-- `workflows/`: Example YAML workflow definitions.
 
 ## Building and Running
 
@@ -45,7 +46,7 @@ uv pip install -e ".[dev]" --prerelease=allow
 ### Execution
 Run a workflow by providing a path to a YAML file and an initial JSON input:
 ```bash
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": "tide pools"}'
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{"topic": "tide pools"}'
 ```
 
 ### Testing

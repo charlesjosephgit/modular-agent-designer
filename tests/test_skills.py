@@ -171,9 +171,9 @@ class TestSkillRegistry:
         assert isinstance(skills[0], Skill)
         assert skills[0].name == "summarize-text"
 
-    def test_resolve_local_skill(self) -> None:
-        """Resolve local project skill: skills.summarize-text"""
-        cfg = SkillConfig(ref="skills.summarize-text")
+    def test_resolve_example_skill(self) -> None:
+        """Resolve repository example skill: examples.skills.summarize-text"""
+        cfg = SkillConfig(ref="examples.skills.summarize-text")
         skills = resolve_skill("local_summary", cfg)
         assert len(skills) == 1
         assert isinstance(skills[0], Skill)
@@ -232,5 +232,4 @@ class TestBuildSkillToolset:
         registry = {"a": [_make_skill("skill-a")]}
         result = build_skill_toolset(["a"], registry)
         assert isinstance(result, SkillToolset)
-
 

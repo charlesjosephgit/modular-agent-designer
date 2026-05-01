@@ -4,8 +4,8 @@ from modular_agent_designer import load_workflow, build_workflow, run_workflow_a
 
 async def main():
     # 1. Load the workflow configuration from a YAML file
-    # Ensure you have 'workflows/hello_world.yaml' or similar in your path
-    yaml_path = "workflows/hello_world.yaml"
+    # Ensure you have 'examples/workflows/hello_world.yaml' or similar in your path
+    yaml_path = "examples/workflows/hello_world.yaml"
     
     # 2. Define the input data for the workflow
     input_data = {"topic": "Deep Sea Explorers"}

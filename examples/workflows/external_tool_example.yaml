@@ -16,7 +16,7 @@
 #
 # Then run:
 #   uv run modular-agent-designer run \
-#     workflows/external_tool_example.yaml --input '{"city": "Paris"}'
+#     examples/workflows/external_tool_example.yaml --input '{"city": "Paris"}'
 #
 # The `ref:` field accepts any dotted path of the form
 # `<module.path>.<callable>` where the module is importable in the current env.

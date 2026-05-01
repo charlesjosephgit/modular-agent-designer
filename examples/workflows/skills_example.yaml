@@ -6,11 +6,11 @@
 #
 # Run:
 #   uv run modular-agent-designer run \
-#     workflows/skills_example.yaml --input '{"topic": "climate change"}'
+#     examples/workflows/skills_example.yaml --input '{"topic": "climate change"}'
 #
 # This example uses:
 #   - A built-in skill from the framework (summarizer)
-#   - A local skill from the project's skills/ folder (local_summary)
+#   - A local skill from the repository's examples/skills folder (local_summary)
 #
 # The SkillToolset provides progressive disclosure:
 #   L1: Agent sees skill name + description at startup
@@ -29,7 +29,7 @@ skills:
   summarizer:
     ref: modular_agent_designer.skills.summarize-text
   local_summary:
-    ref: skills.summarize-text
+    ref: examples.skills.summarize-text
 
 tools: {}
 
@@ -37,7 +37,7 @@ agents:
   researcher:
     model: local
     mode: task
-    instruction_file: prompts.skills_example__researcher
+    instruction_file: examples.prompts.skills_example__researcher
     skills: [summarizer]
 
 workflow:

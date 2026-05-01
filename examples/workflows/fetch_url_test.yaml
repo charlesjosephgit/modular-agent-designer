@@ -15,7 +15,7 @@ agents:
   fetcher:
     model: local_fast
     mode: chat
-    instruction_file: prompts.fetch_url_test__fetcher
+    instruction_file: examples.prompts.fetch_url_test__fetcher
     tools: [fetch]
 
 workflow:

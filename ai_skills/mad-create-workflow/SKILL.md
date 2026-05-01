@@ -206,7 +206,7 @@ edges:
     default: handle_other
 ```
 
-See [`workflows/switch_example.yaml`](../../workflows/switch_example.yaml) for a runnable example.
+See [`examples/workflows/switch_example.yaml`](../../examples/workflows/switch_example.yaml) for a runnable example.
 
 **Dynamic destination** (an LLM router picks the next node by name at runtime):
 
@@ -217,7 +217,7 @@ edges:
     allowed_targets: [analyst, writer, researcher]
 ```
 
-See [`workflows/dynamic_router.yaml`](../../workflows/dynamic_router.yaml) for a runnable example.
+See [`examples/workflows/dynamic_router.yaml`](../../examples/workflows/dynamic_router.yaml) for a runnable example.
 
 **Parallel fan-out + join** (dispatch to multiple nodes concurrently, then synthesize):
 
@@ -229,7 +229,7 @@ edges:
     join: synthesizer
 ```
 
-See [`workflows/parallel_workflow.yaml`](../../workflows/parallel_workflow.yaml) for a runnable example.
+See [`examples/workflows/parallel_workflow.yaml`](../../examples/workflows/parallel_workflow.yaml) for a runnable example.
 
 **Loop workflow** (writer → reviewer → revise cycle):
 
@@ -274,14 +274,14 @@ edges:
     condition: default
 ```
 
-See [`workflows/retry_workflow.yaml`](../../workflows/retry_workflow.yaml) and [`workflows/typed_errors.yaml`](../../workflows/typed_errors.yaml).
+See [`examples/workflows/retry_workflow.yaml`](../../examples/workflows/retry_workflow.yaml) and [`examples/workflows/typed_errors.yaml`](../../examples/workflows/typed_errors.yaml).
 
 **Structured-output routing** (Pydantic schema drives edge conditions):
 
 ```yaml
 agents:
   validator:
-    output_schema: schemas.validation.ValidationResult  # Pydantic v2 class
+    output_schema: examples.schemas.validation.ValidationResult  # Pydantic v2 class
 
 edges:
   - from: validator
@@ -293,11 +293,11 @@ edges:
     condition: default
 ```
 
-See [`workflows/output_schema_routing.yaml`](../../workflows/output_schema_routing.yaml) + [`schemas/validation.py`](../../schemas/validation.py).
+See [`examples/workflows/output_schema_routing.yaml`](../../examples/workflows/output_schema_routing.yaml) + [`examples/schemas/validation.py`](../../examples/schemas/validation.py).
 
 **ADK 2.0 agent overrides** (`generate_content_config`, `parallel_worker`, `output_key`, `static_instruction`):
 
-See [`workflows/agent_overrides.yaml`](../../workflows/agent_overrides.yaml) for all supported fields.
+See [`examples/workflows/agent_overrides.yaml`](../../examples/workflows/agent_overrides.yaml) for all supported fields.
 
 For full loop, error routing, and parallel edge coverage, load the `mad-routing` skill.
 
@@ -420,7 +420,7 @@ workflow:
 ```
 
 ```bash
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic": "the ocean"}'
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{"topic": "the ocean"}'
 ```
 
 ---

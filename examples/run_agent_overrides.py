@@ -1,4 +1,4 @@
-"""Test script for workflows/agent_overrides.yaml.
+"""Test script for examples/workflows/agent_overrides.yaml.
 
 Verifies:
 - coordinator writes to state["coordinator_result"] (custom output_key)
@@ -29,7 +29,7 @@ SEPARATOR = "=" * 60
 async def main(topic: str) -> None:
     from modular_agent_designer import load_workflow, build_workflow, run_workflow_async
 
-    yaml_path = "workflows/agent_overrides.yaml"
+    yaml_path = "examples/workflows/agent_overrides.yaml"
     input_data = {"topic": topic}
 
     print(f"\n{SEPARATOR}")

@@ -12,16 +12,16 @@ models:
 agents:
   validator:
     model: fast
-    output_schema: "schemas.validation.ValidationResult"
-    instruction_file: prompts.output_schema_routing__validator
+    output_schema: "examples.schemas.validation.ValidationResult"
+    instruction_file: examples.prompts.output_schema_routing__validator
 
   process_node:
     model: fast
-    instruction_file: prompts.output_schema_routing__process_node
+    instruction_file: examples.prompts.output_schema_routing__process_node
 
   reject_node:
     model: fast
-    instruction_file: prompts.output_schema_routing__reject_node
+    instruction_file: examples.prompts.output_schema_routing__reject_node
 
 workflow:
   entry: validator

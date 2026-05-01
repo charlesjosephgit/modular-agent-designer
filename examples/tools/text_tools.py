@@ -1,10 +1,10 @@
-"""Custom text analysis tools — lives in the project-root tools/ directory.
+"""Custom text analysis tools for the example workflows.
 
 These are plain Python callables referenced from YAML via:
-    ref: tools.text_tools.<function_name>
+    ref: examples.tools.text_tools.<function_name>
 
 No pip install is required. Run `modular-agent-designer` from the project root
-and the tools/ directory is automatically importable.
+and the examples/ package is automatically importable.
 """
 from __future__ import annotations
 

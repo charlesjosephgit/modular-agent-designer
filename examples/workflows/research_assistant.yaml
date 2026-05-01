@@ -9,15 +9,15 @@ models:
 agents:
   researcher:
     model: local_fast
-    instruction_file: prompts.research_assistant__researcher
+    instruction_file: examples.prompts.research_assistant__researcher
 
   analyst:
     model: local_fast
-    instruction_file: prompts.research_assistant__analyst
+    instruction_file: examples.prompts.research_assistant__analyst
 
   writer:
     model: local_fast
-    instruction_file: prompts.research_assistant__writer
+    instruction_file: examples.prompts.research_assistant__writer
 
 workflow:
   nodes:

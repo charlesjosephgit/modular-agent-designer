@@ -17,7 +17,7 @@ from modular_agent_designer.cli import _run_workflow
 
 WORKFLOWS_DIR = (
     __file__
-    and __import__("pathlib").Path(__file__).parent.parent / "workflows"
+    and __import__("pathlib").Path(__file__).parent.parent / "examples" / "workflows"
 )
 
 

@@ -60,7 +60,7 @@ modular-agent-designer create <agent-name> [--dir <parent>] [--force]
 ollama serve &
 ollama pull gemma:e4b
 
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"tide pools"}'
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{"topic":"tide pools"}'
 ```
 
 Output: a JSON object containing each agent's output under its YAML name key.
@@ -321,7 +321,7 @@ This expands at load time into standard `condition: {eval: ...}` edges — the b
       "False": low_quality
 ```
 
-See [`workflows/switch_example.yaml`](workflows/switch_example.yaml) for a runnable example.
+See [`examples/workflows/switch_example.yaml`](examples/workflows/switch_example.yaml) for a runnable example.
 
 ### Dynamic Destination
 
@@ -348,7 +348,7 @@ workflow:
 - `allowed_targets` is optional — when omitted, all workflow nodes are candidates. When provided, only those nodes are wired as route targets and unknown names fail validation at load time.
 - If the template resolves to a name that isn't among the candidates, the workflow terminates with a logged error.
 
-See [`workflows/dynamic_router.yaml`](workflows/dynamic_router.yaml) for a runnable example.
+See [`examples/workflows/dynamic_router.yaml`](examples/workflows/dynamic_router.yaml) for a runnable example.
 
 ### Loop Config (Controlled Cycles)
 
@@ -377,7 +377,7 @@ edges:
 
 The framework tracks iteration counts in state automatically (key: `_loop_<from>_<to>_iter`). On exhaustion the counter is reset to 0.
 
-See [`workflows/loop_workflow.yaml`](workflows/loop_workflow.yaml) for a runnable writer→reviewer→finalizer loop.
+See [`examples/workflows/loop_workflow.yaml`](examples/workflows/loop_workflow.yaml) for a runnable writer→reviewer→finalizer loop.
 
 ### Agent Retry Config
 
@@ -458,7 +458,7 @@ The error info in state (`state._error_<agent_name>`):
 }
 ```
 
-See [`workflows/typed_errors.yaml`](workflows/typed_errors.yaml) for a runnable example.
+See [`examples/workflows/typed_errors.yaml`](examples/workflows/typed_errors.yaml) for a runnable example.
 
 ### Parallel / Fan-Out Edges
 
@@ -655,7 +655,7 @@ agents:
 
 ### Full example
 
-See [`workflows/agent_overrides.yaml`](workflows/agent_overrides.yaml) for a complete workflow demonstrating all new params together.
+See [`examples/workflows/agent_overrides.yaml`](examples/workflows/agent_overrides.yaml) for a complete workflow demonstrating all new params together.
 
 ---
 
@@ -798,7 +798,7 @@ agents:
 
 **Lifecycle**: MCP connections are opened lazily on first use and closed automatically by the ADK Runner. No teardown code is required.
 
-See [`workflows/mcp_example.yaml`](workflows/mcp_example.yaml) for a runnable reference showing all three transports together.
+See [`examples/workflows/mcp_example.yaml`](examples/workflows/mcp_example.yaml) for a runnable reference showing all three transports together.
 
 ---
 
@@ -868,7 +868,7 @@ tools:
 uv run modular-agent-designer run workflows/my_workflow.yaml --input '{"text": "hello"}'
 ```
 
-See [`tools/text_tools.py`](tools/text_tools.py) and [`workflows/local_tools_example.yaml`](workflows/local_tools_example.yaml) for a working reference.
+See [`examples/tools/text_tools.py`](examples/tools/text_tools.py) and [`examples/workflows/local_tools_example.yaml`](examples/workflows/local_tools_example.yaml) for a working reference.
 
 ---
 
@@ -887,7 +887,7 @@ tools:
 - The package must be installed in the same Python environment that runs `modular-agent-designer` (`uv pip install -e ./your_pkg --prerelease=allow` for a local editable install).
 - The ref must resolve to a **callable** (function, async function, or instance with `__call__`). Pointing at a module, a dict, or a non-callable attribute will raise a `TypeError` at load time naming the alias and the resolved type.
 
-See [`workflows/external_tool_example.yaml`](workflows/external_tool_example.yaml) for a runnable example with setup instructions.
+See [`examples/workflows/external_tool_example.yaml`](examples/workflows/external_tool_example.yaml) for a runnable example with setup instructions.
 
 ---
 
@@ -962,7 +962,7 @@ from modular_agent_designer import load_workflow, build_workflow, run_workflow_a
 
 async def main():
     # 1. Load the workflow configuration
-    cfg = load_workflow("workflows/hello_world.yaml")
+    cfg = load_workflow("examples/workflows/hello_world.yaml")
     
     # 2. Build the workflow graph
     workflow = build_workflow(cfg)
@@ -1014,19 +1014,19 @@ Exactly one of `--input` or `--input-file` is required unless `--dry-run` is set
 
 ```bash
 # Inline JSON
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"AI"}'
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{"topic":"AI"}'
 
 # From a file
-uv run modular-agent-designer run workflows/hello_world.yaml --input-file input.json
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input-file input.json
 
 # From stdin
-echo '{"topic":"AI"}' | uv run modular-agent-designer run workflows/hello_world.yaml --input-file -
+echo '{"topic":"AI"}' | uv run modular-agent-designer run examples/workflows/hello_world.yaml --input-file -
 
 # Build only, no LLM calls
-uv run modular-agent-designer run workflows/hello_world.yaml --dry-run
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --dry-run
 
 # With debug logging
-uv run modular-agent-designer run workflows/hello_world.yaml --input '{"topic":"AI"}' --log-level DEBUG
+uv run modular-agent-designer run examples/workflows/hello_world.yaml --input '{"topic":"AI"}' --log-level DEBUG
 ```
 
 ### `validate` — check a workflow without running it
@@ -1042,10 +1042,10 @@ Exits `0` on success, `1` on any error. Useful for CI pipelines and pre-commit h
 
 ```bash
 # Full validation (schema + build — requires API keys)
-uv run modular-agent-designer validate workflows/research_assistant.yaml
+uv run modular-agent-designer validate examples/workflows/research_assistant.yaml
 
 # Schema-only (no API keys required)
-uv run modular-agent-designer validate workflows/research_assistant.yaml --skip-build
+uv run modular-agent-designer validate examples/workflows/research_assistant.yaml --skip-build
 ```
 
 ### `list` — inspect a workflow's structure
@@ -1069,10 +1069,10 @@ Loads the workflow config (no LLM calls, no API keys required) and emits a [Merm
 
 ```bash
 # Print to terminal — pipe into a .mmd file or paste into mermaid.live
-uv run modular-agent-designer diagram workflows/conditional_workflow.yaml
+uv run modular-agent-designer diagram examples/workflows/conditional_workflow.yaml
 
 # Write directly to a file
-uv run modular-agent-designer diagram workflows/complex_conditions.yaml --output diagram.mmd
+uv run modular-agent-designer diagram examples/workflows/complex_conditions.yaml --output diagram.mmd
 ```
 
 Example output for `conditional_workflow.yaml`:
