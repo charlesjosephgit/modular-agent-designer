@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
+from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ _SESSION_ID = "cli-session"
 
 _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
 _INTERNAL_STATE_PREFIXES = (_STATE_PREFIX, "_loop_", "_error_", "_dispatch_")
+_CLI_SKILLS_PACKAGE = "modular_agent_designer.cli_skills"
 
 
 def _package_version() -> str:
@@ -82,6 +85,49 @@ def _parse_workflow_input(raw_input: str) -> Any:
         return json.loads(raw_input)
     except json.JSONDecodeError:
         return raw_input
+
+
+def _copy_cli_skills(target_dir: Path, force: bool = False) -> list[Path]:
+    """Copy bundled assistant CLI skills into a discovery directory."""
+    skills_root = resources.files(_CLI_SKILLS_PACKAGE)
+
+    with resources.as_file(skills_root) as root:
+        skill_dirs = sorted(
+            path
+            for path in root.iterdir()
+            if path.is_dir() and path.name.startswith("mad-")
+        )
+
+        existing = [
+            target_dir / path.name
+            for path in skill_dirs
+            if (target_dir / path.name).exists()
+            or (target_dir / path.name).is_symlink()
+        ]
+        if existing and not force:
+            names = ", ".join(str(path) for path in existing)
+            raise FileExistsError(
+                f"Skill folder(s) already exist: {names}. "
+                "Use --force to replace them."
+            )
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        installed: list[Path] = []
+        for skill_dir in skill_dirs:
+            destination = target_dir / skill_dir.name
+            if force:
+                _remove_existing_path(destination)
+            shutil.copytree(skill_dir, destination)
+            installed.append(destination)
+
+    return installed
+
+
+def _remove_existing_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
 
 
 @click.group()
@@ -438,6 +484,42 @@ def create(agent_name: str, parent_dir: str | None, force: bool) -> None:
         f"  2. Run:           uv run modular-agent-designer run "
         f"{agent_name}/{agent_name}.yaml --input '{{\"message\": \"hello\"}}'\n"
     )
+
+
+@main.group(name="cli-skills")
+def cli_skills() -> None:
+    """Manage bundled assistant CLI skills."""
+
+
+@cli_skills.command(name="setup")
+@click.option(
+    "--dir",
+    "target_dir",
+    default=".agents/skills",
+    metavar="DIR",
+    help="Directory to install skills into (defaults to .agents/skills).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Replace existing skill folders in the target directory.",
+)
+def setup_cli_skills(target_dir: str, force: bool) -> None:
+    """Install bundled assistant CLI skills into TARGET_DIR.
+
+    Defaults to .agents/skills for Codex-style project discovery.
+    """
+    target = Path(target_dir).expanduser()
+    try:
+        installed = _copy_cli_skills(target, force=force)
+    except FileExistsError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Installed {len(installed)} CLI skill(s) into {target}/")
+    for path in installed:
+        click.echo(f"  {path.name}")
 
 
 @main.command()

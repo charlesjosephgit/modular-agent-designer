@@ -24,7 +24,7 @@ A modular framework for designing and orchestrating complex agentic workflows wi
 - `examples/`: Shipped runnable examples.
     - `workflows/`: Example YAML workflow definitions.
     - `prompts/`, `tools/`, `schemas/`, `skills/`: Example assets referenced by those workflows.
-- `ai_skills/`: Task-specific instructional skills for AI coding assistants (Gemini CLI, Claude Code).
+- `src/modular_agent_designer/cli_skills/`: Task-specific instructional skills for AI coding assistants (Codex, Gemini CLI, Claude Code).
 - `tests/`: Comprehensive test suite using `pytest`.
 
 ## Building and Running

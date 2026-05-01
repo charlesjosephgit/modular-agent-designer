@@ -1113,9 +1113,9 @@ flowchart TD
 
 ---
 
-## AI Coding Assistant Skills
+## CLI Coding Assistant Skills
 
-The [`ai_skills/`](ai_skills/) directory contains five task-specific skills for Claude Code and Gemini CLI. Both tools use the same [ADK SKILL.md format](https://geminicli.com/docs/cli/skills/) and auto-discover skills from a `.claude/skills/` or `.gemini/skills/` directory in your project root.
+The [`src/modular_agent_designer/cli_skills/`](src/modular_agent_designer/cli_skills/) package contains five task-specific skills for Codex, Claude Code, Gemini CLI, and other coding assistants that use `SKILL.md` directories.
 
 | Task | Skill |
 |---|---|
@@ -1125,13 +1125,26 @@ The [`ai_skills/`](ai_skills/) directory contains five task-specific skills for 
 | Conditional routing, loops, error routing, parallel edges | `mad-routing` |
 | Sub-agents, skills, output schemas, custom nodes | `mad-sub-agents` |
 
+### Codex / Agents CLI
+
+Install the bundled skills into the project-level discovery directory:
+
+```bash
+mad cli-skills setup
+```
+
+This creates `.agents/skills/mad-overview/`, `.agents/skills/mad-create-workflow/`, etc. To replace existing copies:
+
+```bash
+mad cli-skills setup --force
+```
+
 ### Claude Code
 
 **1. Copy skills into the Claude Code discovery directory:**
 
 ```bash
-mkdir -p .claude/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" .claude/skills/; done
+mad cli-skills setup --dir .claude/skills
 ```
 
 This creates `.claude/skills/mad-overview/`, `.claude/skills/mad-create-workflow/`, etc. Commit these to version control so every contributor gets them automatically.
@@ -1161,8 +1174,7 @@ Claude Code reads each skill's `name` and `description` at session start and act
 **1. Copy skills into the Gemini CLI discovery directory:**
 
 ```bash
-mkdir -p .gemini/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" .gemini/skills/; done
+mad cli-skills setup --dir .gemini/skills
 ```
 
 Commit `.gemini/skills/` to version control to share skills across your team.
@@ -1190,15 +1202,13 @@ To make the skills available globally — not just in this project — copy them
 
 ```bash
 # Claude Code
-mkdir -p ~/.claude/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.claude/skills/; done
+mad cli-skills setup --dir ~/.claude/skills
 
 # Gemini CLI
-mkdir -p ~/.gemini/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.gemini/skills/; done
+mad cli-skills setup --dir ~/.gemini/skills
 ```
 
-See [`ai_skills/README.md`](ai_skills/README.md) for the full skill reference.
+See [`src/modular_agent_designer/cli_skills/README.md`](src/modular_agent_designer/cli_skills/README.md) for the full skill reference.
 
 ---
 

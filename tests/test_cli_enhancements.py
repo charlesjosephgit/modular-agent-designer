@@ -99,6 +99,92 @@ def test_pyproject_defines_mad_console_alias() -> None:
     assert scripts["mad"] == "modular_agent_designer.cli:main"
 
 
+def test_cli_skills_setup_defaults_to_agents_skills() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main, ["cli-skills", "setup"], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+
+        target = Path(".agents/skills")
+        assert (target / "mad-overview" / "SKILL.md").exists()
+        assert (target / "mad-create-workflow" / "SKILL.md").exists()
+        assert "Installed" in result.output
+
+
+def test_cli_skills_setup_accepts_dir_option() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main,
+            ["cli-skills", "setup", "--dir", ".claude/skills"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert Path(".claude/skills/mad-overview/SKILL.md").exists()
+
+
+def test_cli_skills_setup_refuses_existing_without_force() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        runner.invoke(main, ["cli-skills", "setup"], catch_exceptions=False)
+
+        result = runner.invoke(
+            main, ["cli-skills", "setup"], catch_exceptions=False
+        )
+
+        assert result.exit_code == 1
+        assert "Use --force" in result.output
+
+
+def test_cli_skills_setup_force_replaces_existing() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        runner.invoke(main, ["cli-skills", "setup"], catch_exceptions=False)
+        overview = Path(".agents/skills/mad-overview/SKILL.md")
+        overview.write_text("stale")
+
+        result = runner.invoke(
+            main, ["cli-skills", "setup", "--force"], catch_exceptions=False
+        )
+
+        assert result.exit_code == 0, result.output
+        assert overview.read_text() != "stale"
+
+
+def test_cli_skills_setup_expands_home_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        home = Path.cwd()
+        monkeypatch.setenv("HOME", str(home))
+
+        result = runner.invoke(
+            main,
+            ["cli-skills", "setup", "--dir", "~/.agents/skills"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (home / ".agents/skills/mad-overview/SKILL.md").exists()
+        assert not Path("~/.agents/skills").exists()
+
+
+def test_cli_skills_setup_force_replaces_existing_file() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        target = Path(".agents/skills")
+        target.mkdir(parents=True)
+        (target / "mad-create-workflow").write_text("stale")
+
+        result = runner.invoke(
+            main, ["cli-skills", "setup", "--force"], catch_exceptions=False
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (target / "mad-create-workflow/SKILL.md").exists()
+
+
 def test_run_dry_run_does_not_require_input(tmp_path: Path) -> None:
     p = tmp_path / "wf.yaml"
     p.write_text(_VALID_YAML)

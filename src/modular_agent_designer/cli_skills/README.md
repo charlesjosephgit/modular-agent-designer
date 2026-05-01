@@ -1,8 +1,8 @@
-# AI Coding Assistant Skills
+# CLI Coding Assistant Skills
 
 These are instruction skills for AI coding tools — **not** ADK agent skills used at workflow runtime. Load them into Claude Code, Gemini CLI, or ChatGPT CLI to get expert assistance building `modular-agent-designer` workflows.
 
-> The `skills/` directory at the project root contains ADK runtime skills for agents. This `ai_skills/` directory is separate and contains instructional guides for human developers using AI coding assistants.
+> The `modular_agent_designer/skills/` package contains ADK runtime skills for agents. This `cli_skills/` package is separate and contains instructional guides for developers using AI coding assistants.
 
 ---
 
@@ -20,13 +20,26 @@ These are instruction skills for AI coding tools — **not** ADK agent skills us
 
 ## Loading Skills
 
+### Codex / Agents CLI
+
+Project-level skills can be placed in `.agents/skills/`. From your project root:
+
+```bash
+mad cli-skills setup
+```
+
+That installs the bundled skills into `.agents/skills/`. To replace existing copies:
+
+```bash
+mad cli-skills setup --force
+```
+
 ### Claude Code
 
 Skills must be placed in `.claude/skills/` for auto-discovery. Run once from the project root:
 
 ```bash
-mkdir -p .claude/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" .claude/skills/; done
+mad cli-skills setup --dir .claude/skills
 ```
 
 Then start a session with `claude`. Skills are loaded automatically, or invoke manually:
@@ -42,8 +55,7 @@ Then start a session with `claude`. Skills are loaded automatically, or invoke m
 To make skills available across all your projects (user-level):
 
 ```bash
-mkdir -p ~/.claude/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.claude/skills/; done
+mad cli-skills setup --dir ~/.claude/skills
 ```
 
 ### Gemini CLI
@@ -51,8 +63,7 @@ for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.claude/skills/; done
 Skills must be placed in `.gemini/skills/` for auto-discovery. Run once from the project root:
 
 ```bash
-mkdir -p .gemini/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" .gemini/skills/; done
+mad cli-skills setup --dir .gemini/skills
 ```
 
 Then start a session with `gemini`. The model activates skills automatically based on your prompt, or invoke manually:
@@ -65,8 +76,7 @@ Then start a session with `gemini`. The model activates skills automatically bas
 To make skills available across all your projects (user-level):
 
 ```bash
-mkdir -p ~/.gemini/skills
-for skill in ai_skills/mad-*/; do cp -r "$skill" ~/.gemini/skills/; done
+mad cli-skills setup --dir ~/.gemini/skills
 ```
 
 ### ChatGPT CLI
