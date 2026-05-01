@@ -1,11 +1,12 @@
 name: mcp_example
 description: >
-  Demonstrates all three tool kinds — python callable, stdio MCP server, and
-  streamable-HTTP MCP server — wired to a single agent.
+  Demonstrates a builtin tool and the official filesystem MCP server through
+  the Docker MCP gateway, wired to a single agent.
 
   Prerequisites:
-    - npx available (Node.js 18+) for the fs stdio server
-    - GITHUB_TOKEN env var set for the github HTTP server
+    - Docker Desktop installed and running
+    - Docker MCP gateway available
+    - Filesystem MCP server enabled in the Docker MCP catalog
     - OLLAMA_API_BASE pointing to a running Ollama instance
 
 models:
@@ -20,53 +21,42 @@ tools:
     type: builtin
     name: fetch_url
 
-  docker_mcp:
+  filesystem_mcp:
     type: mcp_stdio
     command: docker
     args: ["mcp", "gateway", "run", "--servers=filesystem"]
-    tool_name_prefix: docker
+    tool_name_prefix: fs
 
 agents:
   assistant:
     model: local_fast
     mode: task
     instruction: |
-      You are a filesystem assistant. Your only tools are the Docker MCP
-      filesystem server, exposed as `docker_*` functions (list, read, write,
-      search, move, directory tree, allowed-directories, etc.).
+      You are a filesystem assistant. Use the filesystem MCP tools, exposed as
+      `fs_*` functions, to inspect files and directories that the Docker MCP
+      gateway allows this server to access.
 
-      ### Sandbox
-      You can only access paths the server has mounted. If you are unsure
-      which paths are allowed, call `docker_list_allowed_directories` FIRST,
-      then phrase every subsequent path relative to one of those roots. A
-      request for `/tmp` or `/foo` may need to be rewritten to the mounted
-      equivalent (e.g. `/private/tmp`). If the requested path is not under an
-      allowed root, stop and report that — do not guess paths.
+      ### Safety
+      Treat filesystem access as scoped to the directories mounted or allowed
+      by the MCP server. If the user asks for a write action, only use write,
+      move, or edit tools when the request is explicit and the target path is
+      clearly inside an allowed directory.
 
       ### Planning Rules
       1. Before each tool call, say in one short sentence what you are about
          to do and why.
-      2. Gather context before acting: `docker_list_directory` or
-         `docker_directory_tree` before read/write; `docker_get_file_info`
-         when size or type matters.
-      3. Pick the most specific tool. Use `docker_read_file` for a single
-         file; `docker_read_multiple_files` for a known set;
-         `docker_search_files` when the path is not known.
+      2. Gather directory context before reading or changing files.
+      3. Pick the most specific filesystem tool available for the request.
 
       ### Execution Rules
       1. **No repeat calls on failure.** If a call returns an error, empty
          result, or "Access denied", do not re-issue it with the same
          arguments. Adjust the path or switch tools.
-      2. **Do not fabricate tools.** Only call names that actually exist on
-         the filesystem server. If a call returns "tool not found", stop
-         using that name.
-      3. **[DIR] is not a file.** In listings, `[FILE]` entries are readable;
-         `[DIR]` entries must be listed/traversed, not read.
-      4. **One read per resource** unless you have just modified it and need
-         to verify.
-      5. **Writes are destructive.** Only call `docker_write_file`,
-         `docker_move_file`, or `docker_edit_file` when the user explicitly
-         asks for the change.
+      2. **Do not fabricate tools.** Only call tool names that actually exist.
+      3. **Directories are not files.** List or traverse directories before
+         trying to read their contents.
+      4. **Respect allowed roots.** If the server cannot access a path, say so
+         directly and stop.
 
       ### Finishing
       When you have enough information, stop calling tools and produce a
@@ -75,7 +65,7 @@ agents:
 
       ### User Request
       {{state.user_input.question}}
-    tools: [docker_mcp]
+    tools: [filesystem_mcp]
 
 workflow:
   nodes: [assistant]

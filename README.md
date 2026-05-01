@@ -208,8 +208,9 @@ tools:
 
   filesystem:
     type: mcp_stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    command: docker
+    args: ["mcp", "gateway", "run", "--servers=filesystem"]
+    tool_name_prefix: fs
 ```
 
 Use YAML for wiring. Use Python only when the tool itself is custom logic.
