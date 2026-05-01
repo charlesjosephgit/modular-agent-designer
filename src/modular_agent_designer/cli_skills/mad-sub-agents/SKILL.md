@@ -1,176 +1,184 @@
 ---
 name: mad-sub-agents
-description: Guide to coordinator/specialist sub-agents, skills usage, output schemas, and custom BaseNode escape hatch.
+description: Use when a coding agent should add or debug MAD coordinator sub-agents, runtime skills, structured output schemas, A2A agents, or custom BaseNode implementations.
 ---
 
-# Sub-Agents, Skills, and Advanced Patterns
+# Sub-Agents, Runtime Skills, Schemas, A2A, and Custom Nodes
 
-## Two Delegation Paradigms
+This skill covers advanced agent composition beyond a simple graph pipeline.
 
-| | Graph edges | `sub_agents` |
-|---|---|---|
-| **Who decides routing** | YAML topology (you, at design time) | Parent LLM (at runtime) |
-| **Best for** | Deterministic pipelines, known sequence | Dynamic delegation, "pick the right specialist" |
-| **Defined in** | `workflow.edges` | `agents.<parent>.sub_agents` |
-| **Appear in `workflow.nodes`** | Yes | **No** |
+## Use This When
 
----
+- A parent agent should choose or call specialists at runtime.
+- The workflow needs runtime ADK skills loaded through the YAML `skills:` block.
+- An agent should produce structured output with a Pydantic schema.
+- The workflow needs a remote Agent2Agent protocol agent.
+- Deterministic non-LLM logic needs a custom `BaseNode`.
 
-## How Sub-Agents Work
+Load `mad-routing` when the question is graph topology, and `mad-tools` when the question is callable tools.
 
-Sub-agents are built as ADK `Agent` instances and passed to the parent via `Agent(sub_agents=[...])`. ADK automatically wires them as callable tools the parent LLM can invoke. The parent decides at runtime which specialist(s) to call.
+## Agent Workflow
+
+1. Inspect current `agents:`, `workflow.nodes`, schemas, runtime `skills/`, and any custom node modules.
+2. Decide whether the behavior belongs in graph edges, sub-agent delegation, a runtime skill, a tool, a schema, an A2A agent, or a custom node.
+3. Keep graph nodes and sub-agents distinct: sub-agents are declared under `agents:` but must not appear in `workflow.nodes`.
+4. Add clear `description` values for specialists so the parent LLM knows when to call them.
+5. Validate with `mad list`, `mad diagram`, and `mad run --dry-run`.
+
+## Pattern Decision Table
+
+| Need | Use |
+|---|---|
+| Fixed sequence or deterministic branch | Graph edges; load `mad-routing` |
+| Parent LLM chooses specialists | `sub_agents` |
+| Reusable instructions loaded on demand | Runtime `skills:` |
+| Deterministic callable capability | Tool; load `mad-tools` |
+| Structured JSON-like model output | `output_schema` |
+| Remote A2A-compatible agent | `type: a2a` |
+| Non-LLM stateful workflow logic | `type: node` custom `BaseNode` |
+
+## Sub-Agents
+
+Sub-agents are ADK `Agent` instances passed to a parent agent. The parent chooses when to invoke them.
 
 ```yaml
 agents:
-  # Specialists — NOT in workflow.nodes
   search_specialist:
     model: fast
-    instruction: "Search for factual information on the given topic. Return key facts."
-    mode: single_turn      # wrapped as a callable tool the coordinator can invoke
+    description: "Finds factual information and source URLs."
+    mode: single_turn
+    instruction: |
+      Search for factual information. Return concise findings with sources.
 
   analysis_specialist:
     model: fast
-    instruction: "Identify the three most important themes from the provided findings."
+    description: "Extracts themes and implications from research findings."
     mode: single_turn
+    instruction: |
+      Identify the three most important themes from the provided findings.
 
-  # Coordinator — the only workflow node
   coordinator:
     model: smart
     mode: task
     instruction: |
       Research coordinator for: {{state.user_input.topic}}
 
-      You have two specialists:
-        - search_specialist: finds factual information
-        - analysis_specialist: identifies themes
-
-      1. Delegate search to search_specialist
-      2. Pass findings to analysis_specialist
-      3. Write a 200-word final brief synthesizing both outputs
+      Use search_specialist for source gathering.
+      Use analysis_specialist for theme extraction.
+      Return a concise final brief.
     sub_agents:
       - search_specialist
       - analysis_specialist
 
 workflow:
-  nodes: [coordinator]   # only the parent is a workflow node
-  edges: []
+  nodes: [coordinator]
   entry: coordinator
+  edges: []
 ```
 
----
+Rules:
 
-## The `mode` Field
+- Specialists are declared in `agents:` but omitted from `workflow.nodes`.
+- Use `mode: single_turn` for callable specialist tasks.
+- Add `description` to specialists; parent models use it to choose delegation.
+- Circular sub-agent references are rejected.
+- Nested sub-agents are supported when needed.
 
-| Mode | Behavior | Best for |
-|---|---|---|
-| `single_turn` | Wrapped as a callable tool; invoked once, returns immediately | Specialist tasks — most common for sub-agents |
-| `chat` | Reachable via `transfer_to_agent`; supports back-and-forth | Dialogue, complex multi-turn interaction |
-| `task` | Background task semantics | Long-running or async work |
-| `null` (omitted) | Parent has no explicit exposure mode set | Default for top-level workflow nodes |
+## Template Limitation
 
----
+Sub-agent instructions are not resolved through MAD's state template engine. A sub-agent sees `{{state.x}}` literally.
 
-## Critical: Template Limitation in Sub-Agents
-
-**Sub-agent instructions do NOT support `{{state.x}}` templates.** Only workflow node instructions are resolved by the framework at execution time.
+Wrong:
 
 ```yaml
-# WRONG — this template is NOT resolved; the LLM sees the literal string
 search_specialist:
-  instruction: "Search for {{state.user_input.topic}}"   # {{...}} passed as-is to the LLM
+  instruction: "Research {{state.user_input.topic}}"
+```
 
-# CORRECT — put the template on the parent coordinator instead
+Right:
+
+```yaml
 coordinator:
   instruction: |
-    Research coordinator for: {{state.user_input.topic}}
-    Delegate to search_specialist. Give it the topic above.
+    Topic: {{state.user_input.topic}}
+    Ask search_specialist to research the topic above.
 ```
 
----
-
-## Constraints and Rules
-
-- Sub-agents **must not** appear in `workflow.nodes` — Pydantic rejects it at load time.
-- Sub-agent names must reference agents defined in the `agents:` dict.
-- Circular references (A → B → A) are rejected at load time.
-- Nested sub-agents are supported: a sub-agent can itself have sub-agents. Build order is resolved automatically.
-- `disallow_transfer_to_parent: true` — prevents the sub-agent from transferring control back to the parent.
-- `disallow_transfer_to_peers: true` — prevents the sub-agent from transferring to sibling agents.
-
----
-
-## Skills Usage
-
-Skills are ADK `SkillToolset` instances that use progressive disclosure: the agent sees the skill's name and description at startup, and only loads the full instructions when it calls `load_skill`.
-
-### Define in YAML
-
-```yaml
-skills:
-  # Builtin skill shipped with the framework
-  summarizer:
-    ref: modular_agent_designer.skills.summarize-text
-
-  # Local skill (in project's skills/ directory)
-  my_skill:
-    ref: skills.my-custom-skill
-```
-
-The `ref` format is `<python_package_path>.<skill-directory-name>`. The framework splits on the last `.`, imports the package, and loads `<package_dir>/<skill-dir>/SKILL.md`.
-
-### Reference in an Agent
+## Transfer Controls
 
 ```yaml
 agents:
-  researcher:
+  specialist:
+    model: fast
+    mode: single_turn
+    disallow_transfer_to_parent: true
+    disallow_transfer_to_peers: true
+```
+
+Use these flags when a specialist should only complete its assigned call and not transfer control.
+
+## Runtime Skills
+
+Runtime skills are ADK `SkillToolset` entries. They are different from this `cli_skills/` package.
+
+```yaml
+skills:
+  summarizer:
+    ref: modular_agent_designer.skills.summarize-text
+
+  local_policy:
+    ref: skills.policy-review
+
+agents:
+  reviewer:
     model: smart
-    mode: task
-    skills: [summarizer]
+    skills: [summarizer, local_policy]
     instruction: |
-      You have access to skills. Use them:
-      1. Call `list_skills` to see available skills.
-      2. Call `load_skill` with the skill name to get instructions.
-      3. Follow the skill's instructions for your task.
+      You have runtime skills available.
+      Call list_skills, load the relevant skill, and follow its instructions.
 
-      Topic: {{state.user_input.topic}}
+      Review: {{state.user_input.text}}
 ```
 
-### Create a Local Skill
+The ref format is `<python_package_path>.<skill-directory-name>`. MAD imports the package path and loads `<package_dir>/<skill-directory-name>/SKILL.md`.
 
-```
+Local skill layout:
+
+```text
 skills/
   __init__.py
-  my-custom-skill/
+  policy-review/
     SKILL.md
 ```
 
+Skill front matter:
+
 ```markdown
 ---
-name: my-custom-skill
-description: One-line description shown to the agent at startup.
+name: policy-review
+description: Reviews text for policy and compliance issues.
 ---
 
-Full instructional content here. The agent loads this on demand.
+Instructions for the runtime agent.
 ```
 
----
+## Structured Output Schemas
 
-## Output Schema
-
-Use `output_schema` to enforce structured JSON output from an agent:
+Use `output_schema` when downstream routing or prompts need reliable fields.
 
 ```yaml
 agents:
   extractor:
     model: smart
+    output_schema: my_agent.schemas.product.Product
     instruction: |
-      Extract the product name, price, and category from:
+      Extract product data from:
       {{state.user_input.text}}
-    output_schema: mypackage.models.Product
 ```
 
+Example schema:
+
 ```python
-# mypackage/models.py  (or schemas/product.py inside a scaffolded agent folder)
 from pydantic import BaseModel
 
 class Product(BaseModel):
@@ -179,65 +187,139 @@ class Product(BaseModel):
     category: str
 ```
 
-The `schemas/` folder generated by `modular-agent-designer create` is the recommended home for these classes. Its `__init__.py` contains a worked example. Wire via dotted path:
+In scaffolded projects, put schemas under `schemas/` and reference them by dotted path, such as:
 
 ```yaml
 output_schema: my_agent.schemas.product.Product
 ```
 
-- ADK enforces the schema on the agent's output.
-- The result is written to `state[agent_name]` as a JSON string.
-- Downstream agents receive it stringified: `{{state.extractor}}` gives the JSON.
+Downstream agents receive the structured result through state:
 
----
+```yaml
+instruction: |
+  Product JSON:
+  {{state.extractor}}
+```
 
-## Custom BaseNode Escape Hatch
-
-For non-LLM logic (deterministic routing, data transformation, side effects), use `type: node`:
+Use `output_key` to rename the state key:
 
 ```yaml
 agents:
-  my_router:
-    type: node
-    ref: mypackage.nodes.RouterNode   # BaseNode subclass or @node function
-    config:                           # optional; forwarded as kwargs to the constructor
-      threshold: 0.8
-      label: primary
+  extractor:
+    model: smart
+    output_key: product
+    output_schema: my_agent.schemas.product.Product
 ```
+
+## A2A Remote Agents
+
+Use `type: a2a` for remote Agent2Agent protocol agents.
+
+```yaml
+agents:
+  remote_researcher:
+    type: a2a
+    agent_card: https://remote.example.com/.well-known/agent.json
+    description: "Remote research specialist."
+    output_key: remote_result
+    timeout_seconds: 600
+
+workflow:
+  nodes: [remote_researcher]
+  entry: remote_researcher
+  edges: []
+```
+
+A2A agents can also be sub-agents:
+
+```yaml
+agents:
+  remote_specialist:
+    type: a2a
+    agent_card: ${REMOTE_AGENT_CARD}
+    description: "Remote specialist for detailed analysis."
+
+  coordinator:
+    model: smart
+    instruction: |
+      Delegate detailed analysis when useful.
+    sub_agents: [remote_specialist]
+```
+
+Install optional A2A dependencies when needed:
+
+```bash
+pip install "modular-agent-designer[a2a]"
+```
+
+## Custom BaseNode
+
+Use `type: node` for deterministic workflow logic that should run as a node rather than as an LLM tool.
+
+```yaml
+agents:
+  router_node:
+    type: node
+    ref: my_agent.nodes.RouterNode
+    config:
+      threshold: 0.8
+
+workflow:
+  nodes: [router_node, high_handler, low_handler]
+  entry: router_node
+  edges:
+    - from: router_node
+      to: high_handler
+      condition: "high"
+    - from: router_node
+      to: low_handler
+      condition: default
+```
+
+Example node:
 
 ```python
-# mypackage/nodes.py
-from google.adk.workflow import BaseNode
 from google.adk import Context, Event
+from google.adk.workflow import BaseNode
 
 class RouterNode(BaseNode):
-    def __init__(self, name: str, threshold: float = 0.5, label: str = "default"):
+    def __init__(self, name: str, threshold: float = 0.5):
         super().__init__(name=name)
         self.threshold = threshold
-        self.label = label
 
     async def run(self, ctx: Context, node_input):
-        data = ctx.state.to_dict()
-        if "keyword" in str(node_input):
-            yield Event(route="path_a")
+        score = ctx.state.to_dict().get("score", 0)
+        if score >= self.threshold:
+            yield Event(route="high")
         else:
-            yield Event(route="path_b")
+            yield Event(route="low")
 ```
 
-- Must be a `BaseNode` subclass or `@node`-decorated async generator.
-- The `config:` mapping is passed as keyword arguments to `BaseNode.__init__` (alongside `name`). Lets you parameterise one class for multiple YAML use-cases without writing extra subclasses. `@node` functions ignore `config:`.
-- Manages its own state writes via `ctx.state`.
-- No `output_key` is provided automatically — write to state explicitly if downstream agents need it.
-- Good for: deterministic routers, external API side effects, pure computation without an LLM.
+Notes:
 
----
+- `config:` is passed as keyword arguments to the node constructor.
+- Custom nodes manage their own state writes.
+- Use custom nodes for deterministic workflow behavior; use tools for capabilities an LLM should call.
+
+## Validation
+
+```bash
+mad list workflows/my_workflow.yaml
+mad diagram workflows/my_workflow.yaml
+mad run workflows/my_workflow.yaml --dry-run
+```
+
+`mad list` is especially useful because it marks graph nodes and sub-agents separately.
 
 ## Common Mistakes
 
-| Mistake | What happens | Fix |
-|---|---|---|
-| Sub-agent listed in `workflow.nodes` | Pydantic error: sub-agents must not be workflow nodes | Remove it from `nodes:` |
-| `{{state.x}}` in a sub-agent instruction | Template not resolved; LLM sees literal `{{state.x}}` | Put the template on the parent's instruction |
-| Sub-agent missing from `sub_agents:` on parent | Specialists are built but parent can't invoke them | Add the alias to parent's `sub_agents:` list |
-| `mode: single_turn` omitted on specialist | Parent LLM may not invoke it as a tool correctly | Set `mode: single_turn` on specialists |
-| `output_schema` class not Pydantic v2 | ADK schema enforcement fails at runtime | Use `pydantic.BaseModel` subclass |
+| Mistake | Fix |
+|---|---|
+| Sub-agent appears in `workflow.nodes` | Remove it from graph nodes |
+| Specialist has no `description` | Add one so the parent can delegate correctly |
+| Sub-agent uses `{{state...}}` templates | Put state context in the parent instruction |
+| Runtime skill ref points at the skill dir directly | Use `<package>.<skill-dir>` dotted ref |
+| Local `skills/` or `schemas/` lacks `__init__.py` | Add package markers |
+| `output_schema` is not a Pydantic v2 `BaseModel` | Use a Pydantic model class |
+| Custom node expects `output_key` behavior | Write needed state inside the node |
+| A2A dependency missing | Install the `a2a` extra |

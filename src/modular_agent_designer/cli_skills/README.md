@@ -1,79 +1,80 @@
 # CLI Coding Assistant Skills
 
-These are instruction skills for AI coding tools — **not** ADK agent skills used at workflow runtime. Load them into Claude Code, Gemini CLI, or ChatGPT CLI to get expert assistance building `modular-agent-designer` workflows.
+These bundled skills are for coding agents and assistant CLIs that help developers build `modular-agent-designer` workflows. They are not ADK runtime skills.
 
-> The `modular_agent_designer/skills/` package contains ADK runtime skills for agents. This `cli_skills/` package is separate and contains instructional guides for developers using AI coding assistants.
+Runtime skills live under `modular_agent_designer/skills/` and are loaded by workflow YAML through the `skills:` block. The `cli_skills/` package is different: it gives Codex, Agents CLI, Claude Code, Gemini CLI, or another coding assistant task-specific instructions while editing a project.
 
----
+## Codex / Agents CLI Quickstart
 
-## Which Skill to Load
-
-| Task | Skill to load |
-|---|---|
-| First time using the library / full reference | `mad-overview` |
-| Building a new workflow from scratch | `mad-create-workflow` |
-| Adding tools (builtin, python, MCP stdio/SSE/HTTP) | `mad-tools` |
-| Conditional routing, loops, error routing, parallel edges | `mad-routing` |
-| Using sub-agents, skills, output schemas, or custom nodes | `mad-sub-agents` |
-
----
-
-## Loading Skills
-
-### Codex / Agents CLI
-
-Project-level skills can be placed in `.agents/skills/`. From your project root:
+From the project root, install the bundled skills into the default discovery directory:
 
 ```bash
 mad cli-skills setup
 ```
 
-That installs the bundled skills into `.agents/skills/`. To replace existing copies:
+This copies all bundled skills into:
+
+```text
+.agents/skills/
+```
+
+Replace older installed copies with:
 
 ```bash
 mad cli-skills setup --force
 ```
 
+After installation, a coding agent can auto-select the right skill from `.agents/skills` based on the task, or you can name one directly in the prompt.
+
+## Which Skill Should an Agent Load?
+
+| User task | Load this skill |
+|---|---|
+| Understand the DSL, CLI, state model, or available YAML fields | `mad-overview` |
+| Create a new workflow or turn an idea into runnable YAML | `mad-create-workflow` |
+| Add builtin, Python, MCP stdio, MCP SSE, or MCP HTTP tools | `mad-tools` |
+| Add branches, switch/case, dynamic destinations, loops, retries, error routes, or parallel fan-out | `mad-routing` |
+| Add coordinators, sub-agents, runtime skills, structured outputs, A2A agents, or custom nodes | `mad-sub-agents` |
+
+Agent rule of thumb: load `mad-overview` for orientation, then switch to the narrow skill that owns the change.
+
+## Agent Usage Pattern
+
+When using these skills, a coding agent should:
+
+1. Inspect the existing workflow YAML, prompt files, tools, schemas, and nearby examples before editing.
+2. Preserve local project conventions such as `workflows/`, `prompts/`, `tools/`, `schemas/`, and `skills/`.
+3. Make the smallest workflow change that satisfies the user request.
+4. Validate with `mad list`, `mad diagram`, and `mad run --dry-run` when the workflow can be built without secrets or services.
+5. Run a real `mad run ... --input ...` only when model credentials and local services are available.
+
+## Other Assistant CLIs
+
 ### Claude Code
 
-Skills must be placed in `.claude/skills/` for auto-discovery. Run once from the project root:
+Install into Claude's project-level discovery directory:
 
 ```bash
 mad cli-skills setup --dir .claude/skills
 ```
 
-Then start a session with `claude`. Skills are loaded automatically, or invoke manually:
-
-```
-/mad-overview
-/mad-create-workflow
-/mad-tools
-/mad-routing
-/mad-sub-agents
-```
-
-To make skills available across all your projects (user-level):
+User-level install:
 
 ```bash
 mad cli-skills setup --dir ~/.claude/skills
 ```
 
+Claude can auto-discover the skills or you can invoke them by name, for example `/mad-create-workflow`.
+
 ### Gemini CLI
 
-Skills must be placed in `.gemini/skills/` for auto-discovery. Run once from the project root:
+Install into Gemini's project-level discovery directory:
 
 ```bash
 mad cli-skills setup --dir .gemini/skills
 ```
 
-Then start a session with `gemini`. The model activates skills automatically based on your prompt, or invoke manually:
-
-```
-/mad-overview
-/mad-create-workflow
-```
-
-To make skills available across all your projects (user-level):
+User-level install:
 
 ```bash
 mad cli-skills setup --dir ~/.gemini/skills
@@ -81,10 +82,8 @@ mad cli-skills setup --dir ~/.gemini/skills
 
 ### ChatGPT CLI
 
-Attach the relevant SKILL.md as a file or paste its contents as context before asking for help.
+Attach the relevant `SKILL.md` file as context, or paste the selected skill into the conversation before asking for workflow help.
 
----
+## Complementary Context
 
-## Complementary Context Files
-
-The `CLAUDE.md` and `GEMINI.md` files at the project root give AI tools codebase context (architecture, commands, gotchas). The skills in this directory give task-specific instructional behavior. Both complement each other — load the context file first, then the relevant skill.
+Project context files such as `CLAUDE.md`, `GEMINI.md`, or repository README files explain the local codebase. These skills explain how an assistant should perform a specific MAD workflow task. Use both when available.

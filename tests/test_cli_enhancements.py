@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import tomllib
 import textwrap
+from importlib import resources
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,14 @@ from modular_agent_designer.cli import (
     _printable_event_chunks,
     main,
 )
+
+_CLI_SKILL_NAMES = {
+    "mad-overview",
+    "mad-create-workflow",
+    "mad-tools",
+    "mad-routing",
+    "mad-sub-agents",
+}
 
 _VALID_YAML = textwrap.dedent("""\
     name: hello
@@ -108,9 +117,43 @@ def test_cli_skills_setup_defaults_to_agents_skills() -> None:
         assert result.exit_code == 0, result.output
 
         target = Path(".agents/skills")
-        assert (target / "mad-overview" / "SKILL.md").exists()
-        assert (target / "mad-create-workflow" / "SKILL.md").exists()
+        for skill_name in _CLI_SKILL_NAMES:
+            assert (target / skill_name / "SKILL.md").exists()
         assert "Installed" in result.output
+
+
+def _parse_skill_front_matter(text: str) -> dict[str, str]:
+    assert text.startswith("---\n")
+    _, raw_front_matter, _ = text.split("---", 2)
+    parsed: dict[str, str] = {}
+    for line in raw_front_matter.strip().splitlines():
+        key, value = line.split(":", 1)
+        parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def test_bundled_cli_skills_have_valid_front_matter() -> None:
+    skills_root = resources.files("modular_agent_designer.cli_skills")
+
+    for skill_name in _CLI_SKILL_NAMES:
+        skill_file = skills_root / skill_name / "SKILL.md"
+        front_matter = _parse_skill_front_matter(skill_file.read_text())
+
+        assert front_matter["name"] == skill_name
+        assert front_matter["description"]
+        assert "coding agent" in front_matter["description"].lower()
+
+
+def test_cli_skills_readme_documents_agents_default_and_all_skills() -> None:
+    readme = (
+        resources.files("modular_agent_designer.cli_skills")
+        / "README.md"
+    ).read_text()
+
+    assert "mad cli-skills setup" in readme
+    assert ".agents/skills" in readme
+    for skill_name in _CLI_SKILL_NAMES:
+        assert skill_name in readme
 
 
 def test_cli_skills_setup_accepts_dir_option() -> None:

@@ -1,99 +1,119 @@
 ---
 name: mad-tools
-description: Guide to all tool types in modular-agent-designer: builtin, python, and MCP stdio/SSE/HTTP.
+description: Use when a coding agent should add, choose, debug, or validate modular-agent-designer builtin tools, Python callables, or MCP stdio/SSE/HTTP toolsets.
 ---
 
-# Tools Reference
+# Tools in MAD Workflows
 
-Tools are resolved at **build time** and passed to the ADK `Agent`. Agents reference them by their YAML alias name in the `tools:` list.
+Tools are resolved at build time and attached to ADK agents through each agent's `tools:` list.
 
----
+## Use This When
 
-## `type: builtin` — Framework-Provided Tools
+- The workflow needs HTTP fetches, local Python functions, file reads, or external MCP tools.
+- An agent references a tool alias that is missing or broken.
+- You need to choose between builtin tools, Python tools, and MCP transports.
 
-Reference a bundled tool by short name or full dotted path:
+Load `mad-create-workflow` for end-to-end workflow creation, `mad-routing` for graph behavior, and `mad-sub-agents` when tools are part of a coordinator/specialist design.
+
+## Agent Workflow
+
+1. Inspect existing `tools:` blocks, local `tools/` packages, and nearby examples such as `examples/workflows/local_tools_example.yaml` and `examples/workflows/mcp_example.yaml`.
+2. Choose the smallest tool type that fits the need:
+   - builtin for shipped simple utilities,
+   - Python for project-local deterministic logic,
+   - MCP for external tool servers or large tool suites.
+3. Give every tool a clear YAML alias and attach that alias to only the agents that need it.
+4. For MCP servers, prefer `tool_filter` and `tool_name_prefix` to reduce ambiguity.
+5. Validate with `mad list` and `mad run --dry-run`.
+
+## Tool Type Decision
+
+| Need | Use |
+|---|---|
+| Fetch text from a URL | builtin `fetch_url` |
+| Fetch JSON from a URL | builtin `http_get_json` |
+| Read a UTF-8 file under CWD | builtin `read_text_file` |
+| Call project code | `type: python` |
+| Use a subprocess MCP server | `type: mcp_stdio` |
+| Use a running SSE MCP service | `type: mcp_sse` |
+| Use streamable HTTP MCP | `type: mcp_http` |
+
+## Builtin Tools
 
 ```yaml
 tools:
-  # Short name (preferred)
   fetch:
     type: builtin
     name: fetch_url
 
-  # Full dotted path (equivalent)
-  fetch2:
+  json_api:
+    type: builtin
+    name: http_get_json
+
+  reader:
+    type: builtin
+    name: read_text_file
+```
+
+Available builtin tools:
+
+| Name | Behavior |
+|---|---|
+| `fetch_url` | Async HTTP GET; follows redirects; 30 second timeout; returns response text or `ERROR: ...` |
+| `http_get_json` | Async HTTP GET and JSON parse; returns a dict or `{"error": "..."}` |
+| `read_text_file` | Reads UTF-8 text relative to CWD; rejects absolute paths and `..` traversal |
+
+For builtin tools, use either `name:` or `ref:`, not both:
+
+```yaml
+tools:
+  fetch:
     type: builtin
     ref: modular_agent_designer.tools.fetch_url
 ```
 
-**Available builtin tools:**
+## Python Tools
 
-| Name | Description |
-|---|---|
-| `fetch_url` | Async HTTP GET; follows redirects; 30 s timeout; returns body as text. On HTTP error returns `ERROR: …` (never raises). |
-| `http_get_json` | Async HTTP GET; parses response as JSON; returns a `dict`. On error returns `{"error": "…"}`. |
-| `read_text_file` | Read a UTF-8 text file at a path relative to CWD. Rejects absolute paths and `..` traversal. Returns contents or `ERROR: …` string. |
-
-Use `name:` OR `ref:`, never both — Pydantic rejects it.
-
----
-
-## `type: python` — Arbitrary Python Callable
-
-Reference any importable callable from an installed package or local directory:
+Use Python tools for deterministic project-local logic.
 
 ```yaml
 tools:
   word_count:
     type: python
-    ref: tools.text_tools.word_count   # dotted path to a callable
+    ref: tools.text_tools.word_count
 
-  forecast:
-    type: python
-    ref: mycompany_tools.weather.get_forecast
+agents:
+  analyst:
+    model: local
+    instruction: |
+      Analyze this text: {{state.user_input.text}}
+      Use word_count when exact counts are needed.
+    tools: [word_count]
 ```
 
-`ref` must point at a **callable** (function, async function, or `__call__`-bearing object) — not a module or class. Pointing at a module raises `TypeError` at build time.
+Recommended layout:
 
-### Local package (no install needed)
-
-Drop a `tools/` directory at your project root:
-
-```
+```text
 your-project/
-  tools/
-    __init__.py        # empty — makes tools/ a Python package
-    text_tools.py      # your functions here
   workflows/
     my_workflow.yaml
+  tools/
+    __init__.py
+    text_tools.py
 ```
 
-Run the CLI from the project root — the framework auto-adds CWD and the YAML file's directory to `sys.path`:
+The CLI adds CWD and the YAML directory to `sys.path`, so local `tools/` packages work when running from the project root.
 
-```bash
-uv run modular-agent-designer run workflows/my_workflow.yaml --input '{"text": "hello world"}'
+Tool refs must point to callables, not modules:
+
+```python
+def word_count(text: str) -> int:
+    return len(text.split())
 ```
 
-### External installed package
+## MCP stdio Tools
 
-Install it into the same venv, then reference by dotted path:
-
-```bash
-uv pip install -e ./my_tools_pkg --prerelease=allow
-```
-
-```yaml
-tools:
-  my_tool:
-    type: python
-    ref: my_tools_pkg.module.my_function
-```
-
----
-
-## `type: mcp_stdio` — Subprocess MCP Server
-
-Spawns a subprocess (e.g., `npx`, `python3`) that speaks the MCP protocol:
+Use `mcp_stdio` when MAD should start the MCP server subprocess:
 
 ```yaml
 tools:
@@ -102,86 +122,69 @@ tools:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/sandbox"]
     env:
-      GITHUB_TOKEN: ${GITHUB_TOKEN}    # ${VAR} expanded at load time
-    tool_filter: [read_file, write_file]   # restrict exposed tools (optional)
-    tool_name_prefix: fs                   # prefix to avoid collisions (optional)
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    tool_filter: [read_file, write_file]
+    tool_name_prefix: fs
 ```
 
-- `command` — the executable to run.
-- `args` — arguments passed to the subprocess.
-- `env` — environment variables for the subprocess; `${VAR}` is expanded from the shell environment at YAML load time. **Fails immediately** if the variable is unset.
-- **Lifecycle**: connection opened lazily on first tool use; ADK Runner closes it automatically.
+Notes:
 
----
+- `${VAR}` values are expanded at YAML load time and fail immediately when unset.
+- The MCP connection is opened lazily on first tool use.
+- ADK Runner handles cleanup.
 
-## `type: mcp_sse` — SSE Transport
+## MCP SSE Tools
 
-For MCP servers already running as a remote service:
+Use `mcp_sse` for an already-running SSE server:
 
 ```yaml
 tools:
-  remote_tools:
+  remote_search:
     type: mcp_sse
     url: http://localhost:8080/sse
     headers:
-      Authorization: "Bearer ${API_TOKEN}"   # ${VAR} expanded at load time
+      Authorization: "Bearer ${API_TOKEN}"
     tool_filter: [search, summarize]
     tool_name_prefix: remote
 ```
 
-Use `mcp_sse` when the MCP server is a long-running process or remote service you don't manage.
+## MCP Streamable HTTP Tools
 
----
-
-## `type: mcp_http` — Streamable HTTP Transport
-
-For MCP servers that use HTTP/2 streaming or the newer streamable HTTP transport:
+Use `mcp_http` for streamable HTTP MCP servers:
 
 ```yaml
 tools:
-  api_tools:
+  api:
     type: mcp_http
     url: https://api.example.com/mcp/
     headers:
-      Authorization: "Bearer ${MY_TOKEN}"
+      Authorization: "Bearer ${API_TOKEN}"
     tool_name_prefix: api
 ```
 
-All three MCP types support `tool_filter` and `tool_name_prefix`.
+## Collision Control
 
----
-
-## `tool_filter` and `tool_name_prefix`
-
-**`tool_filter`** restricts which tools from the MCP server are exposed to the agent. Useful when a server provides dozens of tools but you only need a few:
-
-```yaml
-  fs:
-    type: mcp_stdio
-    command: docker
-    args: ["mcp", "gateway", "run", "--servers=filesystem"]
-    tool_filter: [read_file, list_directory]
-```
-
-**`tool_name_prefix`** renames all tools from the server by prepending a string. Prevents collisions when two MCP servers both expose a tool named `read_file`:
+When an MCP server exposes many tools, restrict and prefix them:
 
 ```yaml
 tools:
   local_fs:
     type: mcp_stdio
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    tool_name_prefix: local    # read_file → local_read_file
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/local"]
+    tool_filter: [read_file, list_directory]
+    tool_name_prefix: local
 
   remote_fs:
     type: mcp_http
     url: https://remote.example.com/mcp/
-    tool_name_prefix: remote   # read_file → remote_read_file
+    tool_filter: [read_file]
+    tool_name_prefix: remote
 ```
 
----
+Without prefixes, two servers that expose `read_file` can confuse the model or collide in the tool namespace.
 
-## Complete Multi-Tool Example
+## Complete Tool Example
 
 ```yaml
 name: multi_tool_demo
@@ -190,49 +193,55 @@ models:
   local:
     provider: ollama
     model: ollama_chat/llama3.2
-    thinking: { reasoning_effort: high }
 
 tools:
-  # Builtin: HTTP fetch
   fetch:
     type: builtin
     name: fetch_url
 
-  # Python: local callable
   word_count:
     type: python
     ref: tools.text_tools.word_count
 
-  # MCP stdio: filesystem server via Docker MCP gateway
-  docker_fs:
+  filesystem:
     type: mcp_stdio
-    command: docker
-    args: ["mcp", "gateway", "run", "--servers=filesystem"]
-    tool_name_prefix: docker
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/sandbox"]
+    tool_filter: [read_file, list_directory]
+    tool_name_prefix: fs
 
 agents:
   assistant:
     model: local
     mode: task
     instruction: |
-      You have three tools: fetch_url, word_count, and docker_* filesystem tools.
-      Help the user with: {{state.user_input.question}}
-    tools: [fetch, word_count, docker_fs]
+      Answer: {{state.user_input.question}}
+      Use fetch for web pages, word_count for exact counts, and fs_* tools for filesystem inspection.
+    tools: [fetch, word_count, filesystem]
 
 workflow:
   nodes: [assistant]
-  edges: []
   entry: assistant
+  edges: []
 ```
 
----
+## Validation
+
+```bash
+mad list workflows/my_workflow.yaml
+mad run workflows/my_workflow.yaml --dry-run
+```
+
+For a live run, make sure required MCP servers, subprocess commands, env vars, and model credentials are available.
 
 ## Common Mistakes
 
-| Mistake | What happens | Fix |
-|---|---|---|
-| `ref` points at a module, not a callable | `TypeError` at build time | Point `ref` at the function, e.g., `tools.text_tools.word_count` |
-| `${VAR}` with an unset env var | Immediate failure at load time with a clear message | Export the env var before running |
-| Tool alias referenced in agent `tools:` but not defined in `tools:` | Pydantic error at load time | Add the tool definition under `tools:` |
-| `name:` and `ref:` both set on a builtin | Pydantic rejects it | Use one or the other, not both |
-| Forgetting `tool_name_prefix` when two MCP servers share tool names | Agent calls wrong tool or gets confused | Add a unique prefix to each MCP toolset |
+| Mistake | Fix |
+|---|---|
+| Agent lists a tool alias not declared under `tools:` | Add the tool or correct the alias |
+| Python `ref` points to a module | Point to a callable such as `tools.text_tools.word_count` |
+| Local `tools/` lacks `__init__.py` | Add it so Python can import the package |
+| MCP env var is unset | Export it before load/build |
+| MCP exposes too many tools | Add `tool_filter` |
+| Multiple MCP servers expose the same names | Add unique `tool_name_prefix` values |
+| Ollama model cannot call tools | Use an `ollama_chat/` model where tool calling is needed |

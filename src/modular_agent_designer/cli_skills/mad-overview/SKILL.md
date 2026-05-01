@@ -1,64 +1,67 @@
 ---
 name: mad-overview
-description: Complete reference for the modular-agent-designer YAML DSL, execution pipeline, and CLI.
+description: Use when a coding agent needs the modular-agent-designer YAML DSL, CLI commands, state model, validation flow, or a map to the narrower MAD skills.
 ---
 
-# modular-agent-designer: Complete Reference
+# modular-agent-designer Overview
 
-`modular-agent-designer` is a declarative YAML-to-ADK workflow compiler. You describe agents, models, tools, and graph topology in a single YAML file; the framework compiles it into an executable Google ADK `Workflow` and runs it. No Python code is needed to build or modify agent pipelines.
+`modular-agent-designer` is a YAML-to-Google-ADK workflow compiler. A workflow file declares models, tools, runtime skills, agents, and graph edges; the CLI validates it, builds an ADK workflow, and runs it.
 
----
+## Use This When
+
+- The user asks how MAD works or which YAML fields are available.
+- You need to inspect an unfamiliar MAD project before changing it.
+- You need a compact reference before loading a narrower skill.
+
+For implementation tasks, prefer the owner skill:
+
+| Task | Load |
+|---|---|
+| Build a workflow from scratch | `mad-create-workflow` |
+| Add builtin, Python, or MCP tools | `mad-tools` |
+| Add conditions, loops, retries, errors, or parallel fan-out | `mad-routing` |
+| Add sub-agents, runtime skills, schemas, A2A, or custom nodes | `mad-sub-agents` |
+
+## Agent Workflow
+
+1. Inspect existing `*.yaml`, `prompts/`, `tools/`, `schemas/`, `skills/`, and relevant `examples/workflows/*.yaml`.
+2. Identify whether the task changes workflow topology, agent behavior, tools, schemas, or runtime services.
+3. Reuse existing aliases and project structure where possible.
+4. Validate with:
+
+```bash
+mad list path/to/workflow.yaml
+mad diagram path/to/workflow.yaml
+mad run path/to/workflow.yaml --dry-run
+```
+
+Use `uv run modular-agent-designer ...` when working from a source checkout that has not installed the console script.
 
 ## Execution Pipeline
 
-```
+```text
 YAML file
-  → load_workflow(path)       # config/loader.py — parse + Pydantic validate → RootConfig
-  → build_workflow(cfg)       # workflow/builder.py — compile to ADK Workflow
-  → run_workflow_async(wf, input_data)   # __init__.py — execute + return state dict
+  -> load_workflow(path)          # parse YAML and validate with Pydantic
+  -> build_workflow(cfg)          # compile into ADK workflow nodes
+  -> run_workflow_async(wf, input_data)
+  -> final session state dict
 ```
 
----
-
-## Full YAML Structure
-
-A workflow file has six top-level keys: `name`, `description` (optional), `models`, `tools`, `skills`, `agents`, `workflow`.
+## Top-Level YAML Shape
 
 ```yaml
 name: my_workflow
 description: Optional human-readable description.
 
 models:
-  fast:
-    provider: anthropic
-    model: anthropic/claude-haiku-4-5-20251001
-    temperature: 0.7
-    max_tokens: 1024
-
-  smart:
-    provider: anthropic
-    model: anthropic/claude-sonnet-4-6
-    thinking:
-      type: enabled         # Anthropic extended-thinking
-      budget_tokens: 2048
+  local:
+    provider: ollama
+    model: ollama_chat/llama3.2
 
 tools:
   fetch:
     type: builtin
     name: fetch_url
-
-  my_fn:
-    type: python
-    ref: mypackage.module.my_function
-
-  fs:
-    type: mcp_stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    env:
-      SOME_VAR: ${MY_ENV_VAR}     # expanded at load time; fails immediately if unset
-    tool_filter: [read_file, write_file]
-    tool_name_prefix: fs
 
 skills:
   summarizer:
@@ -66,277 +69,150 @@ skills:
 
 agents:
   researcher:
-    model: fast
+    model: local
     instruction: |
-      Research this topic: {{state.user_input.topic}}
-      Use fetch to gather information.
+      Research: {{state.user_input.topic}}
     tools: [fetch]
     skills: [summarizer]
-    # -- OR -- use a dotted ref to a prompt file instead of inline instruction:
-    # instruction_file: prompts.my_workflow__researcher
-
-  writer:
-    model: smart
-    description: "Writes polished articles from research findings."
-    instruction: |
-      Based on this research: {{state.researcher}}
-      Write a polished 300-word article.
-    output_schema: mypackage.models.Article   # optional Pydantic v2 class
-    output_key: article                       # state["article"] instead of state["writer"]
-    generate_content_config:
-      temperature: 0.8
-      max_output_tokens: 1024
-
-  coordinator:
-    model: smart
-    mode: task
-    static_instruction: "You are a research coordinator. Be decisive."
-    instruction: |
-      Coordinate research on: {{state.user_input.topic}}
-      Delegate to your sub-agents.
-    thinking:
-      thinking_budget: 1024
-    sub_agents:
-      - researcher
-
-  router:
-    type: node                                # custom BaseNode escape hatch
-    ref: mypackage.nodes.RouterNode
-
-  remote_researcher:
-    type: a2a                                 # remote Agent2Agent protocol agent
-    agent_card: https://remote.example.com/.well-known/agent.json
-    description: "Remote research specialist."
-    output_key: remote_result
 
 workflow:
-  nodes: [researcher, writer]
+  nodes: [researcher]
   entry: researcher
-  max_llm_calls: 20                           # default: 20
-  edges:
-    - from: researcher
-      to: writer
+  edges: []
 ```
 
----
+Required top-level keys: `name`, `models`, `agents`, `workflow`.
+
+Optional top-level keys: `description`, `tools`, `skills`.
 
 ## Models
 
-| Provider | Required model prefix | Required env var |
+| Provider | Model prefix | Env var |
 |---|---|---|
-| Ollama | `ollama/` or `ollama_chat/` | `OLLAMA_API_BASE` (default: `http://localhost:11434`) |
+| Ollama | `ollama/` or `ollama_chat/` | `OLLAMA_API_BASE` defaults to `http://localhost:11434` |
 | Anthropic | `anthropic/` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `gemini/` | `GOOGLE_API_KEY` |
 | OpenAI | `openai/` | `OPENAI_API_KEY` |
 
-API keys are validated at **build time** (not at inference time) — missing keys fail before any LLM call.
+Hosted provider keys are validated at build time. Missing keys fail before the first model call.
 
-**Thinking/reasoning config (provider-specific):**
+Provider-specific thinking examples:
 
 ```yaml
-# Anthropic extended-thinking
-thinking:
-  type: enabled
-  budget_tokens: 2048
+models:
+  claude:
+    provider: anthropic
+    model: anthropic/claude-sonnet-4-6
+    thinking:
+      type: enabled
+      budget_tokens: 2048
 
-# OpenAI o-series
-thinking:
-  reasoning_effort: medium   # low | medium | high
+  gpt:
+    provider: openai
+    model: openai/o3-mini
+    thinking:
+      reasoning_effort: medium
 
-# Gemini 2.5
-thinking:
-  include_thoughts: true
-  thinking_budget: 2048
+  gemini:
+    provider: google
+    model: gemini/gemini-2.5-pro
+    thinking:
+      include_thoughts: true
+      thinking_budget: 2048
 ```
 
----
+## Agents
 
-## Agents Fields
+Common agent fields:
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `model` | string | Yes | Must reference a key in `models:` |
-| `description` | string | No | Shown to the parent LLM to decide delegation — strongly recommended for sub-agents |
-| `instruction` | string | No | Inline prompt; supports `{{state.x.y}}` templates, resolved at execution time. Mutually exclusive with `instruction_file`. |
-| `instruction_file` | string | No | Dotted ref to a `.md` file resolved from cwd, the YAML directory, or the YAML directory's parent, e.g. `prompts.my_workflow__researcher`. Mutually exclusive with `instruction`. |
-| `static_instruction` | string | No | Cacheable static system content; never changes — ADK sends it to a cache-eligible position |
-| `static_instruction_file` | string | No | Dotted ref to a `.md` file containing the static instruction |
-| `tools` | list[string] | No | References to keys in `tools:` |
-| `skills` | list[string] | No | References to keys in `skills:` |
-| `input_schema` | string | No | Dotted path to a Pydantic `BaseModel` class — constrains input when agent is invoked as a tool |
-| `output_schema` | string | No | Dotted path to a Pydantic v2 class for structured output |
-| `output_key` | string | No | State key to write output to; default is the agent name |
-| `sub_agents` | list[string] | No | Names of sub-agent agents; must NOT appear in `workflow.nodes` |
-| `mode` | string | No | `chat`, `task`, or `single_turn` |
-| `parallel_worker` | bool | No | Sub-agents only — allow parent to invoke concurrently with siblings |
-| `generate_content_config` | object | No | Per-agent generation overrides; see below |
-| `thinking` | object | No | `{thinking_budget, include_thoughts}` — builds a `BuiltInPlanner` (Gemini 2.5+ only) |
-| `retry` | object | No | Retry config: `{max_retries: 3, backoff: fixed\|exponential, delay_seconds: 1.0}` |
-| `disallow_transfer_to_parent` | bool | No | Default: false |
-| `disallow_transfer_to_peers` | bool | No | Default: false |
-| `include_contents` | string | No | `default` or `none`; `none` strips conversation history from the context |
-| `type` | string | No | `"node"` for custom BaseNode escape hatch |
-| `ref` | string | No | Dotted path to BaseNode subclass (when `type: node`) |
+| Field | Notes |
+|---|---|
+| `model` | Required for LLM agents; references a key in `models:` |
+| `instruction` | Inline prompt with `{{state.x.y}}` templates |
+| `instruction_file` | Dotted prompt ref such as `prompts.my_workflow__writer`; mutually exclusive with `instruction` |
+| `static_instruction` / `static_instruction_file` | Cacheable system content that does not use state templates |
+| `tools` | List of aliases from `tools:` |
+| `skills` | List of aliases from `skills:` runtime skills |
+| `output_schema` | Dotted Pydantic v2 model path |
+| `output_key` | State key override; default is the agent name |
+| `sub_agents` | Specialist agent names; those specialists must not be in `workflow.nodes` |
+| `mode` | `chat`, `task`, or `single_turn` |
+| `retry` | `{max_retries, backoff, delay_seconds}` |
+| `include_contents` | `default` or `none` |
+| `type: node` | Custom ADK `BaseNode` escape hatch |
+| `type: a2a` | Remote Agent2Agent protocol agent |
 
-### A2A Agent Fields
-
-Use `type: a2a` to call a remote Agent2Agent protocol agent from YAML. The
-entry can be a workflow node or a sub-agent referenced by a coordinator.
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `type` | string | Yes | Must be `a2a`. |
-| `agent_card` | string | Yes | URL or local JSON path for the remote agent card; supports `${VAR}` env expansion. |
-| `description` | string | No | Shown to parent agents for delegation decisions. |
-| `output_key` | string | No | State key to write remote text output to; default is the agent name. |
-| `timeout_seconds` | float | No | HTTP/client timeout; default 600. |
-| `full_history_when_stateless` | bool | No | Forward full history to stateless remote agents. |
-| `use_legacy` | bool | No | ADK A2A compatibility mode; default true. |
-
-### `generate_content_config` fields
-
-| Field | Type | Notes |
-|---|---|---|
-| `temperature` | float | 0.0–2.0 |
-| `top_p` | float | 0.0–1.0 |
-| `top_k` | int | ≥ 1 |
-| `max_output_tokens` | int | ≥ 1 |
-| `candidate_count` | int | ≥ 1 |
-| `stop_sequences` | list[string] | Stop tokens |
-| `seed` | int | For reproducible outputs |
-| `presence_penalty` | float | |
-| `frequency_penalty` | float | |
-| `response_mime_type` | string | e.g. `"application/json"` or `"text/plain"` |
-| `cached_content` | string | Explicit cache resource name (advanced) |
-| `safety_settings` | list | `[{category: ..., threshold: ...}]` |
-
----
-
-## Workflow Fields
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `nodes` | list[string] | Yes | All agents that participate in the graph; sub-agents must NOT be here |
-| `entry` | string | Yes | First node to execute |
-| `edges` | list | Yes | Can be empty `[]` for single-node workflows |
-| `max_llm_calls` | int | No | Circuit breaker; default 20 |
-
-### Edge Fields
-
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `from` | string | — | Source node (required) |
-| `to` | `string \| list[string]` | — | Target node(s); list enables fan-out; `"{{state.x}}"` template enables dynamic destination (required) |
-| `condition` | string/int/bool/list/eval | `null` | Routing condition (exact match, list OR, eval expression, or `default`) |
-| `switch` | string/eval | `null` | Sugar: `"{{state.x}}"` template or `{eval: expr}`; matched against `cases` keys; expands to N eval edges at load time |
-| `cases` | map | `null` | Required with `switch:` — map of value → target node |
-| `default` | string | `null` | Fallback target when no `switch:` case matches (equivalent to `condition: default`) |
-| `allowed_targets` | list[string] | `null` | Constrains a dynamic `to:` template; unknown names rejected at load time |
-| `loop` | object | `null` | `{max_iterations, on_exhausted}` — controlled cycle; required for any edge forming a loop |
-| `on_error` | bool | `false` | Fire only when source node fails (after all retries); mutually exclusive with `condition` |
-| `error_type` | string | `null` | Exact match on exception class name; requires `on_error: true` |
-| `error_match` | string | `null` | Python `re.search` pattern on error message; requires `on_error: true` |
-| `parallel` | bool | `false` | Fan-out; requires `to: [list]` |
-| `join` | string | `null` | Barrier node — wait for all fan-out targets; requires `to: [list]` |
-
----
-
-## State System
-
-Every node's output is automatically written to `state[agent_name]`. The `--input` JSON is available as `state.user_input`.
+Prompt templates are resolved only for workflow nodes at execution time:
 
 ```yaml
 instruction: |
-  The topic is: {{state.user_input.topic}}
-  Researcher found: {{state.researcher}}
-```
+  Topic: {{state.user_input.topic}}
+  Previous result: {{state.researcher}}
 
-- Templates are resolved at **node execution time**, not compile time.
-- Missing key → `StateReferenceError` naming the exact missing path and available keys.
-- Pydantic model outputs are JSON-stringified before being stored.
-
-### Conditional Blocks
-
-Use `{{#if state.key}}…{{/if}}` to conditionally include instruction content:
-
-```yaml
-instruction: |
-  Write about: {{state.user_input.topic}}
   {{#if state.reviewer}}
-  Reviewer feedback to incorporate: {{state.reviewer}}
+  Reviewer feedback: {{state.reviewer}}
   {{/if}}
 ```
 
-- Block included only when key exists and is truthy.
-- Resolved **before** value templates — `{{state.x}}` refs inside are safe.
-- Essential for loops where a node's output doesn't exist on the first iteration.
+Missing required state references raise `StateReferenceError` with the missing path and available keys.
 
----
+## Tools, Skills, and Sub-Agents
 
-## CLI
+- `tools:` declares callable capabilities: builtin tools, Python callables, or MCP toolsets. Load `mad-tools` for details.
+- `skills:` declares runtime ADK skills that agents can load via `SkillToolset`. Load `mad-sub-agents` for details.
+- `sub_agents:` gives a parent LLM dynamic delegation power. Sub-agents are not graph nodes. Load `mad-sub-agents` for details.
 
-```bash
-# Install (--prerelease=allow is mandatory)
-uv sync --prerelease=allow
+## Workflow Graph
 
-# Run a workflow
-uv run modular-agent-designer run <yaml_path> --input '<json>'
-uv run modular-agent-designer run <yaml_path> --input-file input.json   # read input from file
-uv run modular-agent-designer run <yaml_path> --input-file -            # read from stdin
-uv run modular-agent-designer run <yaml_path> --input '<json>' --log-level DEBUG
-
-# With MLflow tracing
-uv run modular-agent-designer run <yaml_path> --input '<json>' --mlflow <experiment_id>
-
-# Validate without running (no API keys required with --skip-build)
-uv run modular-agent-designer validate <yaml_path>
-uv run modular-agent-designer validate <yaml_path> --skip-build   # schema-only, CI-safe
-
-# Inspect a workflow's structure (no API keys required)
-uv run modular-agent-designer list <yaml_path>
-
-# Visualize a workflow as a Mermaid flowchart (no API keys required)
-uv run modular-agent-designer diagram <yaml_path>
-uv run modular-agent-designer diagram <yaml_path> --output diagram.mmd
+```yaml
+workflow:
+  nodes: [classifier, specialist, fallback]
+  entry: classifier
+  max_llm_calls: 20
+  edges:
+    - from: classifier
+      to: specialist
+      condition: "specialist"
+    - from: classifier
+      to: fallback
+      condition: default
 ```
 
-**`run`** — executes the workflow and prints the final session state as pretty-printed JSON. `--input` and `--input-file` are mutually exclusive; exactly one is required. `--log-level` accepts `DEBUG`, `INFO`, `WARNING`, `ERROR`.
+`edges` support:
 
-**`validate`** — validates schema and (by default) also builds the workflow to check API keys and tool refs. `--skip-build` skips the build step so CI can run without secrets. Exits `0` on success, `1` on error.
+- Unconditional sequential edges.
+- Exact-match and list conditions.
+- `condition: {eval: "..."}` expressions.
+- `condition: default` fallback.
+- `switch:` / `cases:` sugar.
+- Dynamic `to: "{{state.router}}"` with `allowed_targets`.
+- Controlled loops with `loop:`.
+- Error routes with `on_error: true`.
+- Parallel fan-out with `to: [...]`, `parallel: true`, and `join:`.
 
-**`list`** — prints a human-readable summary of models, tools, skills, agents (including which are workflow nodes vs. sub-agents), and edges with their conditions.
+Load `mad-routing` before editing non-trivial graph behavior.
 
-**`diagram`** — emits a Mermaid `flowchart TD`. Paste into [mermaid.live](https://mermaid.live) or any GitHub/Markdown renderer. Nodes are rectangles (LLM agents) or hexagons (custom BaseNode). Edges are solid (unconditional) or dashed with a label (string/list/eval/default). Sub-agents appear as a named subgraph cluster.
+## CLI Commands
 
----
+| Command | Purpose |
+|---|---|
+| `mad create <agent_name>` | Scaffold a runnable workflow project |
+| `mad validate <workflow.yaml>` | Validate YAML schema |
+| `mad list <workflow.yaml>` | Print models, tools, agents, and graph details |
+| `mad diagram <workflow.yaml>` | Render a Mermaid graph |
+| `mad run <workflow.yaml> --input '{"key":"value"}'` | Execute a workflow |
+| `mad run <workflow.yaml> --input-file input.json` | Execute using JSON from a file |
+| `mad run <workflow.yaml> --dry-run` | Load and build without model execution |
+| `mad cli-skills setup` | Install assistant skills into `.agents/skills` |
 
-## Library API
+## Common Mistakes
 
-```python
-import asyncio
-from modular_agent_designer import load_workflow, build_workflow, run_workflow_async
-
-async def main():
-    cfg = load_workflow("workflows/my_workflow.yaml")
-    workflow = build_workflow(cfg)
-    final_state = await run_workflow_async(workflow, {"topic": "AI"})
-    print(final_state)  # JSON-serializable dict
-
-asyncio.run(main())
-```
-
----
-
-## Key Gotchas
-
-- **`--prerelease=allow` is mandatory** for all `uv` commands — omitting it breaks dependency resolution.
-- **Model IDs require provider prefix** — `anthropic/claude-sonnet-4-6`, not `claude-sonnet-4-6`. Pydantic rejects bare names at load time.
-- **Sub-agents must NOT appear in `workflow.nodes`** — they live inside their parent agent, not the graph.
-- **`ollama_chat/` prefix required for tool calling and reasoning** — `ollama/` works for plain completion only.
-- **`{{state.x}}` templates are NOT resolved in sub-agent instructions** — only workflow node instructions support templating.
-- **MCP connections are lazy** — opened on first tool use, auto-closed by the ADK Runner. Don't manage their lifecycle manually.
-- **`${VAR}` in `env`/`headers` fails immediately at load time** if the env var is unset — by design.
-- **API keys checked at build time** — set them before calling `build_workflow()` or running the CLI.
-- **Cycles require `loop:` config** — any edge forming a cycle without `loop:` is rejected at load time to prevent accidental infinite loops.
-- **Use `{{#if state.x}}` in loops** — referencing `{{state.x}}` for a node that hasn't run yet raises `StateReferenceError`; wrap in a conditional block.
-- **`on_error` and `condition` are mutually exclusive** — error edges cannot have conditions.
+| Mistake | Fix |
+|---|---|
+| Agent references a missing model/tool/skill alias | Add the alias or correct the spelling |
+| Sub-agent also appears in `workflow.nodes` | Remove sub-agents from graph nodes |
+| `instruction` and `instruction_file` are both set | Keep exactly one |
+| Old path-style prompt refs like `../prompts/foo.md` | Use dotted refs like `prompts.my_workflow__agent` |
+| Conditional and unconditional edges from the same source | Use one routing style per source node |
+| Unbounded cycle in graph edges | Add a `loop:` config with `max_iterations` |
+| Hosted model key missing | Export the provider env var before `mad run --dry-run` |
