@@ -276,6 +276,75 @@ Examples:
 
 ---
 
+## Schemas and Runtime Skills
+
+### Structured Schemas
+
+Use Pydantic schemas when an agent should return structured data that later
+workflow steps can inspect.
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class ValidationResult(BaseModel):
+    validation_result: Literal["success", "fail"]
+    reason: str = Field(description="Why validation passed or failed")
+```
+
+Reference the schema from YAML with a dotted path:
+
+```yaml
+agents:
+  validator:
+    model: fast
+    output_schema: examples.schemas.validation.ValidationResult
+    instruction_file: examples.prompts.output_schema_routing__validator
+
+workflow:
+  edges:
+    - from: validator
+      to: process_node
+      condition:
+        eval: "state.get('validator', {}).get('validation_result') == 'success'"
+    - from: validator
+      to: reject_node
+      condition: default
+```
+
+Example: [`examples/workflows/output_schema_routing.yaml`](examples/workflows/output_schema_routing.yaml)
+
+### Runtime Skills
+
+Runtime skills are reusable instruction packages that agents can load through
+ADK's `SkillToolset`. They are different from the coding-assistant skills in
+`src/modular_agent_designer/cli_skills`.
+
+Define skills once at the workflow root, then attach them to agents by alias:
+
+```yaml
+skills:
+  summarizer:
+    ref: modular_agent_designer.skills.summarize-text
+  local_summary:
+    ref: examples.skills.summarize-text
+
+agents:
+  researcher:
+    model: local
+    instruction_file: prompts.skills_example__researcher
+    skills: [summarizer]
+```
+
+Each skill ref points to a directory containing `SKILL.md`, such as
+[`examples/skills/summarize-text/SKILL.md`](examples/skills/summarize-text/SKILL.md).
+
+Example: [`examples/workflows/skills_example.yaml`](examples/workflows/skills_example.yaml)
+
+---
+
 ## Common Workflow Patterns
 
 ### Sequential Pipeline
@@ -466,6 +535,7 @@ Start here:
 | [`parallel_workflow.yaml`](examples/workflows/parallel_workflow.yaml) | Parallel fan-out and join |
 | [`sub_agent_example.yaml`](examples/workflows/sub_agent_example.yaml) | Parent agent with specialists |
 | [`output_schema_routing.yaml`](examples/workflows/output_schema_routing.yaml) | Structured output and routing |
+| [`skills_example.yaml`](examples/workflows/skills_example.yaml) | Runtime skills attached to an agent |
 
 All workflow examples live in [`examples/workflows`](examples/workflows).
 
