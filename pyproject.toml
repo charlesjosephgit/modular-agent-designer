@@ -43,7 +43,6 @@ packages = ["src/modular_agent_designer"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/modular_agent_designer/py.typed" = "modular_agent_designer/py.typed"
-"src/modular_agent_designer/cli_skills" = "modular_agent_designer/cli_skills"
 
 [tool.uv]
 prerelease = "allow"
