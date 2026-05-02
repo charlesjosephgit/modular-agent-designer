@@ -204,7 +204,9 @@ def build_agent_node(
 
         for attempt in range(1, max_attempts + 1):
             try:
-                run_coro = ctx.run_node(agent, node_input=node_input)
+                run_coro = ctx.run_node(
+                    agent, node_input=node_input, use_as_output=True,
+                )
                 if cfg.timeout_seconds is not None:
                     result = await asyncio.wait_for(
                         run_coro, timeout=cfg.timeout_seconds

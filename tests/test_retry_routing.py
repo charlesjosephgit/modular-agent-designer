@@ -117,7 +117,7 @@ def test_agent_node_reraises_without_on_error(monkeypatch: pytest.MonkeyPatch):
             self.kwargs = kwargs
 
     class FailingCtx(_Ctx):
-        async def run_node(self, agent, node_input=None):
+        async def run_node(self, agent, node_input=None, **kwargs):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(agent_node, "Agent", FakeAgent)
@@ -135,7 +135,7 @@ def test_agent_node_writes_error_state_with_on_error(monkeypatch: pytest.MonkeyP
             self.kwargs = kwargs
 
     class FailingCtx(_Ctx):
-        async def run_node(self, agent, node_input=None):
+        async def run_node(self, agent, node_input=None, **kwargs):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(agent_node, "Agent", FakeAgent)
@@ -156,7 +156,7 @@ def test_agent_node_timeout_reraises_without_on_error(monkeypatch: pytest.Monkey
             self.kwargs = kwargs
 
     class SlowCtx(_Ctx):
-        async def run_node(self, agent, node_input=None):
+        async def run_node(self, agent, node_input=None, **kwargs):
             await asyncio.sleep(0.05)
             return SimpleNamespace()
 
@@ -177,7 +177,7 @@ def test_agent_node_without_timeout_does_not_call_wait_for(
             self.kwargs = kwargs
 
     class PassingCtx(_Ctx):
-        async def run_node(self, agent, node_input=None):
+        async def run_node(self, agent, node_input=None, **kwargs):
             return SimpleNamespace()
 
     def fail_wait_for(*args, **kwargs):

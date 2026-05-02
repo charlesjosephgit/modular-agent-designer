@@ -11,7 +11,7 @@ import sys
 from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import click
 from google.adk import Runner
@@ -19,6 +19,7 @@ from google.adk.agents.run_config import RunConfig
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from .cli_output import EventPrinter, print_final_output, print_final_state
 from .config.loader import load_workflow
 from .plugins.dedup import DeduplicateToolCallsPlugin, _STATE_PREFIX
 from .scaffolding.templates import render as _render_scaffold
@@ -45,38 +46,6 @@ def _is_public_state_key(key: str) -> bool:
         key.startswith(_INTERNAL_STATE_PREFIXES)
         or key.endswith("__thinking")
     )
-
-
-def _printable_event_chunks(event: Any) -> list[str]:
-    chunks: list[str] = []
-    seen: set[str] = set()
-
-    content = getattr(event, "content", None)
-    parts = getattr(content, "parts", None) if content is not None else None
-    if parts:
-        for part in parts:
-            text = getattr(part, "text", None)
-            if text:
-                _append_printable_chunk(chunks, seen, text)
-
-    output = getattr(event, "output", None)
-    if output is not None:
-        _append_printable_chunk(chunks, seen, _format_event_output(output))
-
-    return chunks
-
-
-def _append_printable_chunk(chunks: list[str], seen: set[str], value: str) -> None:
-    value = value.strip()
-    if value and value not in seen:
-        seen.add(value)
-        chunks.append(value)
-
-
-def _format_event_output(output: Any) -> str:
-    if isinstance(output, (dict, list)):
-        return json.dumps(output, indent=2, default=str)
-    return str(output)
 
 
 def _parse_workflow_input(raw_input: str) -> Any:
@@ -256,8 +225,34 @@ def run(
         _echo_workflow_details(cfg)
         return
 
-    final_state = asyncio.run(_run_workflow(workflow, input_data, cfg.workflow.max_llm_calls))
-    click.echo(json.dumps(final_state, indent=2, default=str))
+    printer = EventPrinter(
+        agent_names=cfg.agents.keys(),
+        workflow_node_names=getattr(cfg.workflow, "nodes", ()),
+    )
+    final_state = asyncio.run(
+        _run_workflow(
+            workflow,
+            input_data,
+            cfg.workflow.max_llm_calls,
+            event_handler=printer.handle,
+        )
+    )
+    final_output_author = _resolve_final_output_author(
+        final_state,
+        cfg,
+        printer.last_output_author,
+        printer.last_workflow_node,
+    )
+    print_final_output(
+        _resolve_final_output(
+            final_state,
+            cfg,
+            final_output_author,
+            printer.last_output,
+        ),
+        final_output_author,
+    )
+    print_final_state(final_state)
 
 
 @main.command()
@@ -415,6 +410,50 @@ def _echo_workflow_details(cfg: Any) -> None:
     click.echo("")
 
 
+def _resolve_final_output(
+    final_state: dict[str, Any],
+    cfg: Any,
+    author: str | None,
+    fallback: Any,
+) -> Any:
+    """Return the final workflow node's committed state value.
+
+    ADK marks sub-agent final responses with `message_as_output=True`, but
+    only top-level workflow nodes write the durable workflow result. Prefer the
+    final state value so the CLI banner matches downstream workflow state.
+    """
+    if author is None:
+        return fallback
+
+    agent_cfg = cfg.agents.get(author)
+    output_key = getattr(agent_cfg, "output_key", None) or author
+    return final_state.get(output_key, fallback)
+
+
+def _resolve_final_output_author(
+    final_state: dict[str, Any],
+    cfg: Any,
+    event_author: str | None,
+    last_workflow_node: str | None,
+) -> str | None:
+    """Find the workflow node whose committed state should be printed."""
+    for author in (event_author, last_workflow_node):
+        if author is not None and _state_has_agent_output(final_state, cfg, author):
+            return author
+
+    for author in reversed(getattr(cfg.workflow, "nodes", ())):
+        if _state_has_agent_output(final_state, cfg, author):
+            return author
+
+    return event_author or last_workflow_node
+
+
+def _state_has_agent_output(final_state: dict[str, Any], cfg: Any, author: str) -> bool:
+    agent_cfg = cfg.agents.get(author)
+    output_key = getattr(agent_cfg, "output_key", None) or author
+    return output_key in final_state
+
+
 @main.command(name="list")
 @click.argument("yaml_path")
 def list_workflow(yaml_path: str) -> None:
@@ -551,7 +590,11 @@ def diagram(yaml_path: str, output_path: str | None) -> None:
 
 
 async def _run_workflow(
-    workflow, input_data: Any, max_llm_calls: int = 20
+    workflow,
+    input_data: Any,
+    max_llm_calls: int = 20,
+    *,
+    event_handler: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     session_service = InMemorySessionService()
 
@@ -586,8 +629,8 @@ async def _run_workflow(
         new_message=new_message,
         run_config=RunConfig(max_llm_calls=max_llm_calls),
     ):
-        for chunk in _printable_event_chunks(event):
-            click.echo(chunk)
+        if event_handler is not None:
+            event_handler(event)
 
     # Return the final session state.
     final_session = await session_service.get_session(
