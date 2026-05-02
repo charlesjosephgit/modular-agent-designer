@@ -44,33 +44,60 @@ class EventPrinter:
         self.last_output: Any = None
         self.last_output_author: str | None = None
         self.last_workflow_node: str | None = None
+        self._current_section_name: str | None = None
+        self._current_author: str | None = None
 
     def handle(self, event: Any) -> None:
         author = _resolve_event_author(event, self._agent_names)
+        section_name = _resolve_event_section(
+            event,
+            author,
+            self._workflow_node_names,
+            self._current_section_name,
+        )
+        calls = _get_function_calls(event)
+        responses = _get_function_responses(event)
+        text_chunks = [
+            text.strip()
+            for text in _iter_text_parts(event)
+            if text.strip()
+        ]
+        output = getattr(event, "output", None)
 
-        for call in _get_function_calls(event):
-            args_str = self._truncate(_format_call_args(call.args))
-            line = click.style(f"→ {call.name}({args_str})", fg="yellow")
-            self._echo_line(line)
+        if calls or responses or text_chunks or output is not None:
+            self._ensure_section(section_name)
+            self._ensure_author_spacing(author)
 
-        for resp in _get_function_responses(event):
-            payload = _format_event_output(resp.response)
-            line = click.style(
-                f"← {resp.name} → {self._truncate(payload)}",
-                fg="yellow",
-                dim=True,
+        for call in calls:
+            raw_args = _format_call_args(call.args)
+            args_str = self._truncate(raw_args)
+            closing = "" if self._would_truncate(raw_args) else ")"
+            call_text = click.style(
+                f"→ {call.name}({args_str}{closing}",
+                fg="magenta",
+            )
+            line = (
+                f"{self._author_prefix(author)} "
+                f"{call_text}"
             )
             self._echo_line(line)
 
+        for resp in responses:
+            payload = _format_event_output(resp.response)
+            response = click.style(
+                f"← {resp.name} → {self._truncate(payload)}",
+                fg="bright_yellow",
+            )
+            line = f"{self._author_prefix(author)} {response}"
+            self._echo_line(line)
+
         seen: set[str] = set()
-        for text in _iter_text_parts(event):
-            stripped = text.strip()
-            if not stripped or stripped in seen:
+        for stripped in text_chunks:
+            if stripped in seen:
                 continue
             seen.add(stripped)
             self._emit_agent_text(author, stripped)
 
-        output = getattr(event, "output", None)
         if output is not None:
             formatted = _format_event_output(output).strip()
             if formatted and formatted not in seen:
@@ -92,10 +119,46 @@ class EventPrinter:
                 )
                 self.last_output_author = author
 
+    def close(self) -> None:
+        """Close the current actor section, if one is open."""
+        if self._current_section_name is not None:
+            self._emit_section_marker(self._current_section_name, closing=True)
+            self._current_section_name = None
+            self._current_author = None
+
+    def _ensure_section(self, name: str) -> None:
+        if name == self._current_section_name:
+            return
+        self.close()
+        self._emit_section_marker(name)
+        self._current_section_name = name
+        self._current_author = None
+
+    def _ensure_author_spacing(self, author: str) -> None:
+        if self._current_author is None:
+            self._current_author = author
+            return
+        if author != self._current_author:
+            self._echo_line("")
+            self._current_author = author
+
+    def _emit_section_marker(self, name: str, *, closing: bool = False) -> None:
+        text = f"╰─ end {name}" if closing else f"╭─ {name}"
+        marker = click.style(text, fg="cyan", bold=True)
+        self._echo_line(marker)
+
     def _emit_agent_text(self, author: str, text: str) -> None:
-        header = click.style(f"[{author}]", fg="cyan", bold=True)
         body = self._truncate(text)
-        self._echo_line(f"{header} {body}")
+        self._echo_line(f"{self._author_prefix(author)} {body}")
+
+    def _author_prefix(self, author: str) -> str:
+        if self._workflow_node_names and author not in self._workflow_node_names:
+            return click.style(
+                f"[sub-agent: {author}]",
+                fg="bright_blue",
+                bold=True,
+            )
+        return click.style(f"[{author}]", fg="cyan", bold=True)
 
     def _echo_line(self, line: str) -> None:
         click.echo(line, color=self._color)
@@ -105,7 +168,14 @@ class EventPrinter:
         if limit <= 0 or len(text) <= limit:
             return text
         remaining = len(text) - limit
-        return f"{text[:limit]}… (truncated, {remaining} more chars)"
+        suffix = click.style(
+            f"… (truncated, {remaining} more chars)",
+            dim=True,
+        )
+        return f"{text[:limit]}{suffix}"
+
+    def _would_truncate(self, text: str) -> bool:
+        return self._max_line_chars > 0 and len(text) > self._max_line_chars
 
 
 def print_final_output(
@@ -196,6 +266,38 @@ def _resolve_event_author(event: Any, agent_names: frozenset[str]) -> str:
             return name
 
     return author or "?"
+
+
+def _resolve_event_section(
+    event: Any,
+    author: str,
+    workflow_node_names: frozenset[str],
+    current_section: str | None = None,
+) -> str:
+    """Return the top-level workflow node that should group this event."""
+    if not workflow_node_names:
+        return author
+
+    if author in workflow_node_names:
+        return author
+
+    node_info = getattr(event, "node_info", None)
+    if node_info is not None:
+        for node_name in _iter_node_path_names(getattr(node_info, "path", "")):
+            if node_name in workflow_node_names:
+                return node_name
+
+    if current_section in workflow_node_names:
+        return current_section
+
+    return author
+
+
+def _iter_node_path_names(path: str):
+    for part in path.split("/"):
+        name = part.split("@", 1)[0]
+        if name:
+            yield name
 
 
 def _iter_text_parts(event: Any):

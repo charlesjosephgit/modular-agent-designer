@@ -47,6 +47,7 @@ When using these skills, a coding agent should:
 3. Make the smallest workflow change that satisfies the user request.
 4. Validate with `mad list`, `mad diagram`, and `mad run --dry-run` when the workflow can be built without secrets or services.
 5. Run a real `mad run ... --input ...` only when model credentials and local services are available.
+6. Add `--verbose` to `mad run` only when you need the intermediate workflow-node, agent, sub-agent, and tool event stream. Final output and final state print by default.
 
 ## Other Assistant CLIs
 

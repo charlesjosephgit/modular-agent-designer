@@ -512,6 +512,7 @@ Example: [`examples/workflows/sub_agent_example.yaml`](examples/workflows/sub_ag
 | `mad create <agent-name>` | Scaffold a new editable agent project |
 | `mad run <workflow.yaml> --input '<json-or-text>'` | Run a workflow |
 | `mad run <workflow.yaml> --input-file <path>` | Run using JSON or text from a file |
+| `mad run <workflow.yaml> --input '<json-or-text>' --verbose` | Stream workflow-node, agent, sub-agent, and tool events while running |
 | `mad validate <workflow.yaml>` | Validate and build a workflow |
 | `mad validate <workflow.yaml> --skip-build` | Validate YAML only, useful in CI without secrets |
 | `mad list <workflow.yaml>` | Print models, tools, agents, and graph details |
@@ -522,9 +523,14 @@ Useful run options:
 
 ```bash
 mad run workflow.yaml --dry-run --verbose
+mad run workflow.yaml --input '{"topic": "x"}' --verbose
 mad run workflow.yaml --log-level INFO --input '{"topic": "x"}'
 mad run workflow.yaml --mlflow 0 --input '{"topic": "x"}'
 ```
+
+By default, `mad run` prints the final output and final state only. Add
+`--verbose` to stream intermediate workflow-node, agent, sub-agent, and tool
+events. Use `--log-level` separately when you want Python/library logs.
 
 ---
 

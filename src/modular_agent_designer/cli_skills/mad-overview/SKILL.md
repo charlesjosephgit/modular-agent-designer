@@ -202,8 +202,14 @@ Load `mad-routing` before editing non-trivial graph behavior.
 | `mad diagram <workflow.yaml>` | Render a Mermaid graph |
 | `mad run <workflow.yaml> --input '{"key":"value"}'` | Execute a workflow |
 | `mad run <workflow.yaml> --input-file input.json` | Execute using JSON from a file |
+| `mad run <workflow.yaml> --input '{"key":"value"}' --verbose` | Execute and stream workflow-node, agent, sub-agent, and tool events |
 | `mad run <workflow.yaml> --dry-run` | Load and build without model execution |
+| `mad run <workflow.yaml> --log-level INFO --input '{"key":"value"}'` | Execute with Python/library logging enabled |
 | `mad cli-skills setup` | Install assistant skills into `.agents/skills` |
+
+`mad run` prints final output and final state by default. Add `--verbose` only
+when you need the intermediate event stream; use `--log-level` separately for
+library logs.
 
 ## Common Mistakes
 

@@ -15,11 +15,13 @@ agents:
   # mode: single_turn wraps each as a callable tool the coordinator can invoke.
   search_specialist:
     model: local_fast
+    description: "Summarizes factual background from model knowledge without calling tools."
     instruction_file: prompts.sub_agent_example__search_specialist
     mode: single_turn
 
   analysis_specialist:
     model: local_fast
+    description: "Identifies themes and implications from provided research findings."
     instruction_file: prompts.sub_agent_example__analysis_specialist
     mode: single_turn
 

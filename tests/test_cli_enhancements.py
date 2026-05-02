@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tomllib
 import textwrap
 from importlib import resources
@@ -253,6 +254,51 @@ def test_run_verbose_dry_run_outputs_plan(tmp_path: Path) -> None:
     assert "max_llm_calls" in result.output
 
 
+def test_run_verbose_does_not_enable_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    calls: list[dict] = []
+
+    import modular_agent_designer.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod.logging,
+        "basicConfig",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--dry-run", "--verbose"])
+
+    assert result.exit_code == 0
+    assert calls == []
+
+
+def test_run_log_level_enables_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    calls: list[dict] = []
+
+    import modular_agent_designer.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod.logging,
+        "basicConfig",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", str(p), "--dry-run", "--log-level", "INFO"])
+
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["level"] == logging.INFO
+
+
 def test_internal_state_keys_are_filtered() -> None:
     assert _is_public_state_key("result") is True
     assert _is_public_state_key("__mda_dedup__fetch") is False
@@ -282,7 +328,38 @@ def test_event_printer_labels_content_text_with_author(capsys) -> None:
     _printer().handle(event)
     out = capsys.readouterr().out
 
+    assert "╭─ greeter" in out
     assert "[greeter] hello from the model" in out
+
+
+def test_event_printer_marks_agent_section_switches(capsys) -> None:
+    printer = _printer()
+
+    printer.handle(
+        Event(
+            author="coordinator",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="delegating")],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="search_specialist",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="searching")],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert "╭─ coordinator" in out
+    assert "╰─ end coordinator" in out
+    assert "╭─ search_specialist" in out
+    assert "╰─ end search_specialist" in out
 
 
 def test_event_printer_labels_output_with_author(capsys) -> None:
@@ -321,8 +398,32 @@ def test_event_printer_renders_tool_calls(capsys) -> None:
     _printer().handle(event)
     out = capsys.readouterr().out
 
+    assert "[greeter] → lookup(" in out
     assert "→ lookup(" in out
     assert "q=" in out
+
+
+def test_event_printer_renders_tool_responses_with_author(capsys) -> None:
+    event = Event(
+        author="greeter",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name="lookup",
+                        response={"result": "ok"},
+                    )
+                )
+            ],
+        ),
+    )
+
+    _printer().handle(event)
+    out = capsys.readouterr().out
+
+    assert "[greeter] ← lookup" in out
+    assert '"result": "ok"' in out
 
 
 def test_event_printer_truncates_tool_call_args(capsys) -> None:
@@ -347,6 +448,29 @@ def test_event_printer_truncates_tool_call_args(capsys) -> None:
     assert "→ transfer_to_agent(" in out
     assert "truncated" in out
     assert "x" * 80 not in out
+
+
+def test_event_printer_omits_tool_call_closing_paren_when_truncated(capsys) -> None:
+    event = Event(
+        author="coordinator",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(
+                    function_call=types.FunctionCall(
+                        name="transfer_to_agent",
+                        args={"request": "x" * 80},
+                    )
+                )
+            ],
+        ),
+    )
+
+    EventPrinter(color=True, max_line_chars=20).handle(event)
+    out = capsys.readouterr().out
+
+    assert "truncated" in out
+    assert not out.rstrip().endswith(")")
 
 
 def test_event_printer_deduplicates_content_and_output(capsys) -> None:
@@ -426,6 +550,83 @@ def test_event_printer_attributes_subagent_event_to_subagent(capsys) -> None:
 
     assert "[search_specialist] found 3 articles" in out
     assert "[coordinator]" not in out
+
+
+def test_event_printer_groups_subagent_under_workflow_node(capsys) -> None:
+    printer = _printer(
+        agent_names={"coordinator", "search_specialist"},
+        workflow_node_names={"coordinator"},
+    )
+
+    printer.handle(
+        Event(
+            author="coordinator",
+            node_path="wf@1/coordinator@1",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="delegating")],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="search_specialist",
+            node_path="wf@1/coordinator@1",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="found 3 articles")],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.count("╭─ coordinator") == 1
+    assert out.count("╰─ end coordinator") == 1
+    assert "╭─ search_specialist" not in out
+    assert "[coordinator] delegating\n\n[sub-agent: search_specialist]" in out
+    assert "[sub-agent: search_specialist] found 3 articles" in out
+
+
+def test_event_printer_keeps_subagent_in_current_workflow_section(capsys) -> None:
+    printer = _printer(
+        agent_names={"coordinator", "search_specialist"},
+        workflow_node_names={"coordinator"},
+    )
+
+    printer.handle(
+        Event(
+            author="coordinator",
+            node_path="wf@1/coordinator@1",
+            content=types.Content(
+                role="model",
+                parts=[
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name="search_specialist",
+                            args={"request": "summarize AI"},
+                        )
+                    )
+                ],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="search_specialist",
+            node_path="wf@1/search_specialist@1",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="AI summary")],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.count("╭─ coordinator") == 1
+    assert "╭─ search_specialist" not in out
+    assert "[sub-agent: search_specialist] AI summary" in out
 
 
 def test_event_printer_falls_through_synthetic_router_with_agent_names(capsys) -> None:
@@ -877,7 +1078,7 @@ def test_run_input_file_accepts_plain_text(tmp_path: Path, monkeypatch: pytest.M
     assert '"user_input": "plain text from file"' in result.output
 
 
-def test_run_prints_streamed_events_before_final_state(
+def test_run_suppresses_streamed_events_without_verbose(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     p = tmp_path / "wf.yaml"
@@ -886,7 +1087,17 @@ def test_run_prints_streamed_events_before_final_state(
     import modular_agent_designer.cli as cli_mod
 
     async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
-        click.echo("streamed event")
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text="streamed event")],
+                    ),
+                )
+            )
         return {"greeter": "done"}
 
     monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
@@ -895,7 +1106,45 @@ def test_run_prints_streamed_events_before_final_state(
     result = runner.invoke(main, ["run", str(p), "--input", '{"topic": "x"}'])
 
     assert result.exit_code == 0
-    assert result.output.index("streamed event") < result.output.index('"greeter"')
+    assert "streamed event" not in result.output
+    assert "Final Output (greeter)" in result.output
+    assert "done" in result.output
+    assert '"greeter": "done"' in result.output
+
+
+def test_run_verbose_prints_streamed_events_before_final_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text="streamed event")],
+                    ),
+                )
+            )
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["run", str(p), "--input", '{"topic": "x"}', "--verbose"]
+    )
+
+    assert result.exit_code == 0
+    assert result.output.index("streamed event") < result.output.index("Final State")
+    assert "╭─ greeter" in result.output
     assert '"greeter": "done"' in result.output
 
 

@@ -151,7 +151,10 @@ def main() -> None:
     "--verbose",
     is_flag=True,
     default=False,
-    help="Enable INFO logging and print workflow details during dry runs.",
+    help=(
+        "Stream agent/tool events. "
+        "Dry runs also print workflow details."
+    ),
 )
 def run(
     yaml_path: str,
@@ -163,8 +166,8 @@ def run(
     verbose: bool,
 ) -> None:
     """Run a workflow defined in YAML_PATH with --input DATA or --input-file PATH."""
-    if log_level is not None or verbose:
-        effective_level = log_level.upper() if log_level is not None else "INFO"
+    if log_level is not None:
+        effective_level = log_level.upper()
         logging.basicConfig(
             level=getattr(logging, effective_level),
             format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -225,31 +228,40 @@ def run(
         _echo_workflow_details(cfg)
         return
 
-    printer = EventPrinter(
-        agent_names=cfg.agents.keys(),
-        workflow_node_names=getattr(cfg.workflow, "nodes", ()),
+    printer = (
+        EventPrinter(
+            agent_names=cfg.agents.keys(),
+            workflow_node_names=getattr(cfg.workflow, "nodes", ()),
+        )
+        if verbose
+        else None
     )
     final_state = asyncio.run(
         _run_workflow(
             workflow,
             input_data,
             cfg.workflow.max_llm_calls,
-            event_handler=printer.handle,
+            event_handler=printer.handle if printer is not None else None,
         )
     )
     final_output_author = _resolve_final_output_author(
         final_state,
         cfg,
-        printer.last_output_author,
-        printer.last_workflow_node,
+        printer.last_output_author if printer is not None else None,
+        printer.last_workflow_node if printer is not None else None,
     )
+    final_output = _resolve_final_output(
+        final_state,
+        cfg,
+        final_output_author,
+        printer.last_output if printer is not None else None,
+    )
+    if final_output is None:
+        final_output_author = None
+    if printer is not None:
+        printer.close()
     print_final_output(
-        _resolve_final_output(
-            final_state,
-            cfg,
-            final_output_author,
-            printer.last_output,
-        ),
+        final_output,
         final_output_author,
     )
     print_final_state(final_state)
