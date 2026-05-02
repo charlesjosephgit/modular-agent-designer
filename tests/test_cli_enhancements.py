@@ -643,12 +643,16 @@ def test_event_printer_falls_through_synthetic_router_with_agent_names(capsys) -
         ),
     )
 
-    printer = _printer(agent_names={"validator", "process_node", "reject_node"})
+    printer = _printer(
+        agent_names={"validator", "process_node", "reject_node"},
+        workflow_node_names={"validator", "process_node", "reject_node"},
+    )
     printer.handle(event)
     out = capsys.readouterr().out
 
-    assert "[validator_router] routing" in out
+    assert "[node: validator_router] routing" in out
     assert "[my_workflow]" not in out
+    assert "[sub-agent: validator_router]" not in out
 
 
 def test_print_final_state_wraps_json_in_banner(capsys) -> None:

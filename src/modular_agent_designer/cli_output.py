@@ -152,13 +152,17 @@ class EventPrinter:
         self._echo_line(f"{self._author_prefix(author)} {body}")
 
     def _author_prefix(self, author: str) -> str:
-        if self._workflow_node_names and author not in self._workflow_node_names:
+        if not self._workflow_node_names:
+            return click.style(f"[{author}]", fg="cyan", bold=True)
+        if author in self._workflow_node_names:
+            return click.style(f"[{author}]", fg="cyan", bold=True)
+        if author in self._agent_names:
             return click.style(
                 f"[sub-agent: {author}]",
                 fg="bright_blue",
                 bold=True,
             )
-        return click.style(f"[{author}]", fg="cyan", bold=True)
+        return click.style(f"[node: {author}]", fg="bright_cyan", bold=True)
 
     def _echo_line(self, line: str) -> None:
         click.echo(line, color=self._color)
