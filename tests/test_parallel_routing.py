@@ -181,13 +181,14 @@ def test_fanout_expands_edges_and_injects_join(tmp_path: Path):
     cfg = _load(tmp_path, yaml)
     wf = build_workflow(cfg)
 
-    # Expected edges:
-    # START → dispatcher
-    # dispatcher → a, dispatcher → b, dispatcher → c  (fan-out)
-    # a → join_node, b → join_node, c → join_node  (fan-in)
-    # join_node → synth
-    # Total: 1 + 3 + 3 + 1 = 8
-    assert len(wf.edges) == 8
+    routes = [e.route for e in wf.edges if e.route is not None]
+    assert "_ok" in routes
+    node_names = {
+        getattr(node, "name", None)
+        for edge in wf.edges
+        for node in (edge.from_node, edge.to_node)
+    }
+    assert "_join_dispatcher_a_b_c" in node_names
 
 
 def test_fanout_without_join(tmp_path: Path):
@@ -218,8 +219,13 @@ def test_fanout_without_join(tmp_path: Path):
     cfg = _load(tmp_path, yaml)
     wf = build_workflow(cfg)
 
-    # START → src, src → a, src → b = 3 edges
-    assert len(wf.edges) == 3
+    routes = [e.route for e in wf.edges if e.route is not None]
+    assert "_ok" in routes
+    destinations = {
+        getattr(edge.to_node, "name", None)
+        for edge in wf.edges
+    }
+    assert {"a", "b"}.issubset(destinations)
 
 
 def test_to_list_targets_validated(tmp_path: Path):

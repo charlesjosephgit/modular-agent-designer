@@ -200,10 +200,14 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     model_registry = build_model_registry(cfg.models)
     tool_registry = build_tool_registry(cfg.tools)
     skill_registry = build_skill_registry(cfg.skills)
-    error_src_names = {e.from_ for e in cfg.workflow.edges if e.on_error}
+    workflow_agent_names = {
+        name
+        for name in cfg.workflow.nodes
+        if isinstance(cfg.agents.get(name), AgentConfig)
+    }
 
     node_callables = _build_node_callables(
-        cfg, model_registry, tool_registry, skill_registry, error_src_names
+        cfg, model_registry, tool_registry, skill_registry, workflow_agent_names
     )
 
     adk_edges: list[Any] = []
@@ -256,8 +260,15 @@ def build_workflow(cfg: RootConfig) -> Workflow:
     normal_edges = [e for e in static_edges if not e.on_error]
     error_edges = [e for e in static_edges if e.on_error]
 
-    # Identify sources that have on_error edges — these need unified routing.
-    expanded_error_src_names: set[str] = {e.from_ for e in error_edges}
+    # Identify sources that need unified error-aware routing. All workflow
+    # agents need this gate so a handled failure does not continue through
+    # normal outgoing edges. Explicit on_error sources are included for the
+    # existing typed-error routing behavior.
+    expanded_error_src_names: set[str] = {
+        e.from_ for e in error_edges
+    } | {
+        e.from_ for e in normal_edges if e.from_ in workflow_agent_names
+    }
 
     # Group ALL edges by source node.
     all_edges_by_src: dict[str, list] = defaultdict(list)

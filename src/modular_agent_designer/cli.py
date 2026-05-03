@@ -21,6 +21,7 @@ from google.genai import types
 
 from .cli_output import EventPrinter, print_final_output, print_final_state
 from .config.loader import load_workflow
+from .nodes.agent_node import WORKFLOW_ERROR_OUTPUT_KEY
 from .plugins.dedup import DeduplicateToolCallsPlugin, _STATE_PREFIX
 from .plugins.tool_availability import (
     TOOL_UNAVAILABLE_OUTPUT_KEY,
@@ -262,6 +263,8 @@ def run(
     )
     if final_output is None:
         final_output = final_state.get(TOOL_UNAVAILABLE_OUTPUT_KEY)
+    if final_output is None:
+        final_output = final_state.get(WORKFLOW_ERROR_OUTPUT_KEY)
     if final_output is None:
         final_output_author = None
     if printer is not None:

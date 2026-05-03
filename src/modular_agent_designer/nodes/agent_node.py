@@ -30,6 +30,7 @@ from ..utils.imports import import_dotted_ref
 logger = logging.getLogger(__name__)
 
 _AGENT_CACHE_MAXSIZE = 32
+WORKFLOW_ERROR_OUTPUT_KEY = "workflow_error"
 
 
 class _LRUCache:
@@ -243,15 +244,25 @@ def build_agent_node(
             assert last_exc is not None
             raise last_exc
 
-        # All retries exhausted — write error info to state for on_error routing.
+        # All retries exhausted — write error info to state for on_error
+        # routing and a public message for terminal CLI output.
         error_key = f"_error_{agent_name}"
         error_info = {
             "error_type": type(last_exc).__name__,
             "error_message": str(last_exc),
             "attempts": max_attempts,
         }
+        error_message = _format_agent_failure(agent_name, error_info)
         from google.adk.events.event import Event as AdkEvent
-        yield AdkEvent(state={error_key: error_info}, output=str(last_exc))
+        event = AdkEvent(
+            state={
+                error_key: error_info,
+                WORKFLOW_ERROR_OUTPUT_KEY: error_message,
+            },
+            output=error_message,
+        )
+        event.node_info.message_as_output = True
+        yield event
 
     _wrapper.__name__ = agent_name
     _wrapper.__qualname__ = agent_name
@@ -267,6 +278,19 @@ def _compute_retry_delay(retry_cfg, attempt: int) -> float:
     if retry_cfg.backoff == "exponential":
         return retry_cfg.delay_seconds * (2 ** (attempt - 1))
     return retry_cfg.delay_seconds
+
+
+def _format_agent_failure(agent_name: str, error_info: dict[str, Any]) -> str:
+    attempts = error_info["attempts"]
+    retry_note = (
+        f" after {attempts} attempts"
+        if isinstance(attempts, int) and attempts > 1
+        else ""
+    )
+    return (
+        f"Agent '{agent_name}' failed{retry_note}: "
+        f"{error_info['error_type']}: {error_info['error_message']}"
+    )
 
 
 def _load_output_schema(ref: str | None):

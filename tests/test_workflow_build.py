@@ -105,14 +105,15 @@ def test_complex_branching_supported(tmp_path: Path):
     cfg = _load(tmp_path, complex_yaml)
     wf = build_workflow(cfg)
 
-    # Edges: START -> router, router -> router_router (injected),
+    # Edges include START -> router, router -> router_error_router,
+    # router_error_router -> success gate, success gate -> router_router,
     # router_router -> a (_route_0), router_router -> b (_route_1),
     # router_router -> c (_route_2)
-    assert len(wf.edges) == 5
 
     # Check that deterministic route labels are used
     routes = [edge.route for edge in wf.edges]
-    assert None in routes  # START -> router and router -> router_router
+    assert None in routes
+    assert "_ok" in routes
     assert "_route_0" in routes
     assert "_route_1" in routes
     assert "_route_2" in routes
@@ -150,11 +151,12 @@ def test_eval_condition_in_schema(tmp_path: Path):
     cfg = _load(tmp_path, eval_yaml)
     wf = build_workflow(cfg)
 
-    # START -> classifier, classifier -> classifier_router,
+    # START -> classifier, classifier -> classifier_error_router,
+    # classifier_error_router -> success gate, success gate -> classifier_router,
     # classifier_router -> handler_a (_route_0),
     # classifier_router -> handler_b (_route_1)
-    assert len(wf.edges) == 4
 
     routes = [edge.route for edge in wf.edges]
+    assert "_ok" in routes
     assert "_route_0" in routes
     assert "_route_1" in routes

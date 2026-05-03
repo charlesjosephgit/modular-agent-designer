@@ -12,7 +12,11 @@ from pydantic import ValidationError
 from modular_agent_designer.config.loader import load_workflow
 from modular_agent_designer.config.schema import AgentConfig, RetryConfig
 from modular_agent_designer.nodes import agent_node
-from modular_agent_designer.nodes.agent_node import _compute_retry_delay, build_agent_node
+from modular_agent_designer.nodes.agent_node import (
+    WORKFLOW_ERROR_OUTPUT_KEY,
+    _compute_retry_delay,
+    build_agent_node,
+)
 from modular_agent_designer.workflow.builder import _error_edge_matches, build_workflow
 
 
@@ -148,6 +152,12 @@ def test_agent_node_writes_error_state_with_on_error(monkeypatch: pytest.MonkeyP
     assert len(events) == 1
     assert events[0].actions.state_delta["_error_worker"]["error_type"] == "RuntimeError"
     assert events[0].actions.state_delta["_error_worker"]["error_message"] == "boom"
+    assert (
+        events[0].actions.state_delta[WORKFLOW_ERROR_OUTPUT_KEY]
+        == "Agent 'worker' failed: RuntimeError: boom"
+    )
+    assert events[0].output == "Agent 'worker' failed: RuntimeError: boom"
+    assert events[0].node_info.message_as_output is True
 
 
 def test_agent_node_timeout_reraises_without_on_error(monkeypatch: pytest.MonkeyPatch):
@@ -317,6 +327,35 @@ def test_on_error_edge_creates_error_router(tmp_path: Path):
     # Edges: START→caller, caller→success, caller→error_router, error_router→error
     routes = [e.route for e in wf.edges if e.route is not None]
     assert "_error_0" in routes
+
+
+def test_agent_normal_edge_is_gated_by_error_router(tmp_path: Path):
+    yaml = textwrap.dedent("""\
+        name: fail_stop_test
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller:
+            model: m
+            instruction: call
+          next:
+            model: m
+            instruction: next
+        workflow:
+          nodes: [caller, next]
+          edges:
+            - from: caller
+              to: next
+          entry: caller
+    """)
+    cfg = _load(tmp_path, yaml)
+    wf = build_workflow(cfg)
+
+    routes = [e.route for e in wf.edges if e.route is not None]
+    assert "_ok" in routes
+    assert _node_by_name(wf, "caller_error_router") is not None
 
 
 # ---------------------------------------------------------------------------

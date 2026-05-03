@@ -278,9 +278,10 @@ def test_eval_condition_workflow_edges(tmp_path: Path):
     """)
     cfg = _load(tmp_path, yaml)
     wf = build_workflow(cfg)
-    # START -> src, src -> src_router, router -> a (_route_0), -> b (_route_1), -> c (_route_2)
-    assert len(wf.edges) == 5
+    # START -> src, src -> src_error_router, error router -> success gate,
+    # success gate -> src_router, router -> a/b/c.
     routes = [e.route for e in wf.edges]
+    assert "_ok" in routes
     assert "_route_0" in routes
     assert "_route_1" in routes
     assert "_route_2" in routes

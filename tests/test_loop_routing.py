@@ -225,16 +225,14 @@ def test_loop_workflow_builds_with_exhausted_route(tmp_path: Path):
     cfg = _load(tmp_path, yaml)
     wf = build_workflow(cfg)
 
-    # Edges should include: START→writer, writer→reviewer,
-    # reviewer→reviewer_router, router→writer (_route_0),
-    # router→finalizer (_route_1)
+    # Edges should include guarded normal routes and reviewer conditional
+    # routes: reviewer_router→writer (_route_0),
+    # reviewer_router→finalizer (_route_1).
     # Note: on_exhausted=finalizer reuses _route_1 (no duplicate edge).
     routes = [e.route for e in wf.edges if e.route is not None]
+    assert "_ok" in routes
     assert "_route_0" in routes
     assert "_route_1" in routes
-    # Total edges: START→writer(1) + writer→reviewer(1) + reviewer→router(1)
-    #              + router→writer(1) + router→finalizer(1) = 5
-    assert len(wf.edges) == 5
 
 
 def test_on_exhausted_unknown_node_rejected(tmp_path: Path):
