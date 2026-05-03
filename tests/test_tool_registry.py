@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from google.adk.tools import BaseTool
 from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset as AdkMcpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import (
     SseConnectionParams,
     StreamableHTTPConnectionParams,
@@ -22,6 +23,9 @@ from modular_agent_designer.config.schema import (
     McpSseToolConfig,
     McpStdioToolConfig,
     PythonToolConfig,
+)
+from modular_agent_designer.plugins.tool_availability import (
+    TOOL_UNAVAILABLE_OUTPUT_KEY,
 )
 from modular_agent_designer.tools.registry import build_tool_registry, resolve_tool
 from modular_agent_designer.tools.safety import wrap_adk_base_tool
@@ -140,6 +144,31 @@ def test_mcp_stdio_produces_toolset() -> None:
     assert isinstance(params, StdioServerParameters)
     assert params.command == "npx"
     assert "-y" in params.args
+
+
+async def test_mcp_discovery_failure_exposes_unavailable_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_get_tools(self, readonly_context=None):
+        raise ConnectionError("server offline")
+
+    monkeypatch.setattr(AdkMcpToolset, "get_tools", fail_get_tools)
+    cfg = McpStdioToolConfig(
+        type="mcp_stdio",
+        command="bad-server",
+        tool_name_prefix="fs",
+    )
+    toolset = resolve_tool("fs", cfg)
+
+    tools = await toolset.get_tools_with_prefix()
+
+    assert [tool.name for tool in tools] == ["fs_mcp_unavailable"]
+    assert "server offline" in tools[0].description
+    ctx = type("Ctx", (), {"state": {}})()
+    result = await tools[0].run_async(args={}, tool_context=ctx)
+    assert result["error"] == "MCP_UNAVAILABLE"
+    assert "server offline" in result["message"]
+    assert ctx.state[TOOL_UNAVAILABLE_OUTPUT_KEY] == result["message"]
 
 
 # ---------------------------------------------------------------------------

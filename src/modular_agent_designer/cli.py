@@ -22,6 +22,10 @@ from google.genai import types
 from .cli_output import EventPrinter, print_final_output, print_final_state
 from .config.loader import load_workflow
 from .plugins.dedup import DeduplicateToolCallsPlugin, _STATE_PREFIX
+from .plugins.tool_availability import (
+    TOOL_UNAVAILABLE_OUTPUT_KEY,
+    ToolAvailabilityPlugin,
+)
 from .scaffolding.templates import render as _render_scaffold
 from .workflow.builder import build_workflow
 
@@ -256,6 +260,8 @@ def run(
         final_output_author,
         printer.last_output if printer is not None else None,
     )
+    if final_output is None:
+        final_output = final_state.get(TOOL_UNAVAILABLE_OUTPUT_KEY)
     if final_output is None:
         final_output_author = None
     if printer is not None:
@@ -621,7 +627,7 @@ async def _run_workflow(
         app_name=_APP_NAME,
         agent=workflow,
         session_service=session_service,
-        plugins=[DeduplicateToolCallsPlugin()],
+        plugins=[DeduplicateToolCallsPlugin(), ToolAvailabilityPlugin()],
     )
 
     new_message = types.Content(

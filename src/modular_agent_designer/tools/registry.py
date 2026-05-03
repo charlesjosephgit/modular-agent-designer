@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Union
 
+from google.adk.tools import BaseTool
 from google.adk.tools.mcp_tool import (
     McpToolset,
     SseConnectionParams,
     StreamableHTTPConnectionParams,
 )
+from google.genai import types
 from mcp import StdioServerParameters
 
 from ..config.schema import (
@@ -18,6 +20,7 @@ from ..config.schema import (
     PythonToolConfig,
     ToolConfig,
 )
+from ..plugins.tool_availability import TOOL_UNAVAILABLE_OUTPUT_KEY
 from ..utils.imports import import_dotted_ref
 from . import BUILTIN_TOOLS
 from .safety import wrap_adk_base_tool, wrap_callable_tool
@@ -27,8 +30,55 @@ class SafeMcpToolset(McpToolset):
     """MCP toolset that returns tool execution errors as results."""
 
     async def get_tools(self, readonly_context: Any = None) -> list[Any]:
-        tools = await super().get_tools(readonly_context=readonly_context)
+        try:
+            tools = await super().get_tools(readonly_context=readonly_context)
+        except Exception as exc:
+            return [_McpUnavailableTool(exc)]
         return [wrap_adk_base_tool(tool) for tool in tools]
+
+
+class _McpUnavailableTool(BaseTool):
+    """Fallback tool exposed when an MCP server cannot be reached."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._error_message = (
+            f"MCP server unavailable: {type(exc).__name__}: {exc}"
+        )
+        super().__init__(
+            name="mcp_unavailable",
+            description=(
+                f"{self._error_message}. Call this tool to report the MCP "
+                "connection failure. Do not invent other MCP tool names."
+            ),
+        )
+
+    def _get_declaration(self) -> types.FunctionDeclaration:
+        return types.FunctionDeclaration(
+            name=self.name,
+            description=self.description,
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={},
+            ),
+        )
+
+    async def run_async(
+        self, *, args: dict[str, Any], tool_context: Any
+    ) -> dict[str, Any]:
+        if tool_context is not None:
+            tool_context.state[TOOL_UNAVAILABLE_OUTPUT_KEY] = (
+                self._error_message
+            )
+        return {
+            "error": "MCP_UNAVAILABLE",
+            "message": self._error_message,
+            "mcp_unavailable": {
+                "instruction": (
+                    "Tell the user the MCP server is unavailable and include "
+                    "this message. Do not retry unavailable MCP tools."
+                ),
+            },
+        }
 
 
 def _resolve_callable(name: str, ref: str) -> Callable[..., Any]:

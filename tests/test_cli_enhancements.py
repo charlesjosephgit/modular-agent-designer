@@ -27,6 +27,9 @@ from modular_agent_designer.cli_output import (
     print_final_output,
     print_final_state,
 )
+from modular_agent_designer.plugins.tool_availability import (
+    TOOL_UNAVAILABLE_OUTPUT_KEY,
+)
 
 _CLI_SKILL_NAMES = {
     "mad-overview",
@@ -301,6 +304,7 @@ def test_run_log_level_enables_logging(
 
 def test_internal_state_keys_are_filtered() -> None:
     assert _is_public_state_key("result") is True
+    assert _is_public_state_key(TOOL_UNAVAILABLE_OUTPUT_KEY) is True
     assert _is_public_state_key("__mda_dedup__fetch") is False
     assert _is_public_state_key("_loop_writer_reviewer_iter") is False
     assert _is_public_state_key("_error_worker") is False
