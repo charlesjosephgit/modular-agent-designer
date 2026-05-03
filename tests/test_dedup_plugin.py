@@ -14,7 +14,8 @@ class _Tool(BaseTool):
 
 
 class _ToolContext:
-    def __init__(self) -> None:
+    def __init__(self, agent_name: str = "researcher") -> None:
+        self.agent_name = agent_name
         self.state: dict[str, Any] = {}
 
 
@@ -84,14 +85,29 @@ async def test_successful_duplicate_returns_previous_result_context() -> None:
         tool_context=ctx,  # type: ignore[arg-type]
     )
 
-    assert duplicate is not None
-    assert duplicate["error"] == "DUPLICATE_TOOL_CALL"
-    assert duplicate["duplicate_tool_call"] == {
-        "tool_name": "fetch_url",
-        "arguments": args,
-        "previous_result": result,
-        "instruction": (
-            "Do not call this tool again with the same arguments. "
-            "Use previous_result as the tool result."
-        ),
-    }
+    assert duplicate == result
+
+
+async def test_duplicate_detection_is_scoped_to_agent() -> None:
+    plugin = DeduplicateToolCallsPlugin()
+    tool = _Tool("load_skill")
+    researcher_ctx = _ToolContext(agent_name="researcher")
+    writer_ctx = _ToolContext(agent_name="writer")
+    writer_ctx.state = researcher_ctx.state
+    args = {"skill_name": "summarize"}
+    result = {"skill": "summarize", "instructions": "Use short summaries."}
+
+    await plugin.after_tool_callback(
+        tool=tool,
+        tool_args=args,
+        tool_context=researcher_ctx,  # type: ignore[arg-type]
+        result=result,
+    )
+
+    duplicate = await plugin.before_tool_callback(
+        tool=tool,
+        tool_args=args,
+        tool_context=writer_ctx,  # type: ignore[arg-type]
+    )
+
+    assert duplicate is None
