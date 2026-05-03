@@ -967,6 +967,7 @@ def _build_unified_error_router(
                 "error_router '%s': error '%s' matched no error edge — workflow terminates",
                 src_name, err_type,
             )
+            yield AdkEvent(output=str(error_info))
         else:
             logger.info(
                 "error_router '%s': no error → routing to success gate",
