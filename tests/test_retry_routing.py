@@ -43,6 +43,12 @@ async def _run_node_route(node, state: dict) -> str | None:
     return None
 
 
+async def _run_node_event(node, state: dict):
+    async for event in node.run(ctx=_Ctx(state), node_input=None):
+        return event
+    return None
+
+
 async def _collect_node_events(node, ctx) -> list:
     events = []
     async for event in node.run(ctx=ctx, node_input=None):
@@ -603,6 +609,36 @@ def test_on_error_preserves_conditional_success_routing(tmp_path: Path):
 
     assert ok_route == "_ok"
     assert high_route == "_route_1"
+
+
+def test_error_router_success_path_is_quiet(tmp_path: Path):
+    content = textwrap.dedent("""\
+        name: quiet_success_gate
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          caller: {model: m, instruction: call}
+          success: {model: m, instruction: success}
+        workflow:
+          nodes: [caller, success]
+          edges:
+            - from: caller
+              to: success
+          entry: caller
+    """)
+    cfg = _load(tmp_path, content)
+    wf = build_workflow(cfg)
+    error_router = _node_by_name(wf, "caller_error_router")
+    success_gate = _node_by_name(wf, "caller_success_gate")
+
+    router_event = asyncio.run(_run_node_event(error_router, {"caller": "done"}))
+    gate_event = asyncio.run(_run_node_event(success_gate, {"caller": "done"}))
+
+    assert router_event.actions.route == "_ok"
+    assert router_event.output is None
+    assert gate_event.output is None
 
 
 def test_on_error_preserves_dynamic_success_routing(tmp_path: Path):

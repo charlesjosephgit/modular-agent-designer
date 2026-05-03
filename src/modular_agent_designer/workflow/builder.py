@@ -738,16 +738,11 @@ def _error_edge_matches(edge: EdgeConfig, err_type: str, err_msg: str) -> bool:
 
 
 def _build_success_gate_node(src_name: str) -> Any:
-    """Build a pass-through node used after error-aware routing succeeds."""
+    """Build a quiet pass-through node after error-aware routing succeeds."""
     node_name = f"{src_name}_success_gate"
 
     async def _success_gate(ctx: Any, node_input: Any):
-        state_dict = (
-            ctx.state.to_dict()
-            if hasattr(ctx.state, "to_dict")
-            else dict(ctx.state)
-        )
-        yield AdkEvent(output=state_dict.get(src_name, ""))
+        yield AdkEvent()
 
     _success_gate.__name__ = node_name
     _success_gate.__qualname__ = node_name
@@ -820,8 +815,7 @@ def _build_unified_error_router(
                 "error_router '%s': no error → routing to success gate",
                 src_name,
             )
-            raw_output = state_dict.get(src_name, "")
-            yield AdkEvent(route="_ok", output=raw_output)
+            yield AdkEvent(route="_ok")
 
     _error_router.__name__ = f"{src_name}_error_router"
     _error_router.__qualname__ = f"{src_name}_error_router"
