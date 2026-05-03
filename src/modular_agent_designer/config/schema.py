@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from ..state.reserved import check_user_key
+
 _ENV_VAR_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
 
@@ -723,5 +725,13 @@ class RootConfig(BaseModel):
 
         # Detect circular sub_agent references.
         _detect_sub_agent_cycles(self.agents)
+
+        # Validate output_key fields against reserved state key patterns.
+        for agent_name, cfg in self.agents.items():
+            if isinstance(cfg, (AgentConfig, A2aAgentConfig)) and cfg.output_key is not None:
+                check_user_key(
+                    cfg.output_key,
+                    context=f"agent '{agent_name}' output_key",
+                )
 
         return self

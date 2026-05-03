@@ -24,6 +24,7 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.workflow import node as adk_node
 
 from ..config.schema import AgentConfig, AgentGenerateContentConfig, AgentThinkingConfig
+from ..errors import WorkflowError
 from ..plugins.thinking import make_capture_thinking_callback
 from ..state.template import StateReferenceError, resolve
 from ..utils.imports import import_dotted_ref
@@ -259,25 +260,34 @@ def build_agent_node(
             assert last_exc is not None
             raise last_exc
 
-        # All retries exhausted — write error info to state for on_error
-        # routing and a public message for terminal CLI output.
+        # All retries exhausted — build the final error list and write to state
+        # for on_error routing. Tool errors collected in the staging key during
+        # execution are merged in first so the full trace is visible on failure.
         error_key = f"_error_{agent_name}"
+        staging_key = f"_tool_errors_{agent_name}"
         root_exc = _root_cause_exception(last_exc)
-        error_info = {
-            "error_type": type(root_exc).__name__,
-            "error_message": str(root_exc),
-            "attempts": max_attempts,
-        }
-        error_message = _format_agent_failure(agent_name, error_info)
-        ctx.state[error_key] = error_info
-        ctx.state[WORKFLOW_ERROR_OUTPUT_KEY] = error_message
+        retry_note = f" after {max_attempts} attempts" if max_attempts > 1 else ""
+        error = WorkflowError(
+            error_type=type(root_exc).__name__,
+            error_message=(
+                f"Agent '{agent_name}' failed{retry_note}: "
+                f"{type(root_exc).__name__}: {root_exc}"
+            ),
+            context={"attempts": max_attempts},
+        )
+        # Merge staged tool errors (written during execution) + agent failure.
+        current_state = ctx.state.to_dict()
+        staged = current_state.get(staging_key)
+        new_errors = (list(staged) if isinstance(staged, list) else []) + [error.to_dict()]
+        ctx.state[error_key] = new_errors
+        ctx.state[WORKFLOW_ERROR_OUTPUT_KEY] = error.error_message
         from google.adk.events.event import Event as AdkEvent
         event = AdkEvent(
             state={
-                error_key: error_info,
-                WORKFLOW_ERROR_OUTPUT_KEY: error_message,
+                error_key: new_errors,
+                WORKFLOW_ERROR_OUTPUT_KEY: error.error_message,
             },
-            output=error_message,
+            output=error.error_message,
         )
         event.node_info.message_as_output = True
         yield event
@@ -296,19 +306,6 @@ def _compute_retry_delay(retry_cfg, attempt: int) -> float:
     if retry_cfg.backoff == "exponential":
         return retry_cfg.delay_seconds * (2 ** (attempt - 1))
     return retry_cfg.delay_seconds
-
-
-def _format_agent_failure(agent_name: str, error_info: dict[str, Any]) -> str:
-    attempts = error_info["attempts"]
-    retry_note = (
-        f" after {attempts} attempts"
-        if isinstance(attempts, int) and attempts > 1
-        else ""
-    )
-    return (
-        f"Agent '{agent_name}' failed{retry_note}: "
-        f"{error_info['error_type']}: {error_info['error_message']}"
-    )
 
 
 def _root_cause_exception(exc: Exception | None) -> Exception:

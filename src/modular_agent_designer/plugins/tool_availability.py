@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 
+from ..errors import WorkflowError, append_error_to_state
+
 if TYPE_CHECKING:
     from google.adk.tools.tool_context import ToolContext
 
@@ -36,7 +38,27 @@ class ToolAvailabilityPlugin(BasePlugin):
         output_message = _tool_unavailable_message(
             tool.name, available_tools, mcp_unavailable_tool
         )
-        tool_context.state[TOOL_UNAVAILABLE_OUTPUT_KEY] = output_message
+        instruction = (
+            "Do not retry this unavailable tool name. Use another "
+            "available tool if it can satisfy the request; otherwise "
+            "explain that the requested tool is not available."
+        )
+        we = WorkflowError(
+            error_type="TOOL_NOT_AVAILABLE",
+            error_message=output_message,
+            context={
+                "requested_tool": tool.name,
+                "arguments": tool_args,
+                "available_tools": available_tools,
+                "mcp_unavailable_tool": mcp_unavailable_tool,
+                "details": message,
+                "instruction": instruction,
+            },
+        )
+        agent_name = getattr(tool_context, "agent_name", None)
+        if agent_name:
+            append_error_to_state(tool_context.state, f"_tool_errors_{agent_name}", we)
+        # Return the original agent-facing format so LLM behavior is unchanged.
         return {
             "error": "TOOL_NOT_AVAILABLE",
             "message": output_message,
@@ -46,11 +68,7 @@ class ToolAvailabilityPlugin(BasePlugin):
                 "available_tools": available_tools,
                 "mcp_unavailable_tool": mcp_unavailable_tool,
                 "details": message,
-                "instruction": (
-                    "Do not retry this unavailable tool name. Use another "
-                    "available tool if it can satisfy the request; otherwise "
-                    "explain that the requested tool is not available."
-                ),
+                "instruction": instruction,
             },
         }
 

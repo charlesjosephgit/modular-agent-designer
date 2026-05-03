@@ -12,6 +12,7 @@ from google.adk.tools.mcp_tool import (
 from google.genai import types
 from mcp import StdioServerParameters
 
+from ..errors import WorkflowError, append_error_to_state
 from ..config.schema import (
     BuiltinToolConfig,
     McpHttpToolConfig,
@@ -65,19 +66,24 @@ class _McpUnavailableTool(BaseTool):
     async def run_async(
         self, *, args: dict[str, Any], tool_context: Any
     ) -> dict[str, Any]:
+        instruction = (
+            "Tell the user the MCP server is unavailable and include "
+            "this message. Do not retry unavailable MCP tools."
+        )
+        we = WorkflowError(
+            error_type="MCP_UNAVAILABLE",
+            error_message=self._error_message,
+            context={"instruction": instruction},
+        )
         if tool_context is not None:
-            tool_context.state[TOOL_UNAVAILABLE_OUTPUT_KEY] = (
-                self._error_message
-            )
+            agent_name = getattr(tool_context, "agent_name", None)
+            if agent_name:
+                append_error_to_state(tool_context.state, f"_tool_errors_{agent_name}", we)
+        # Return the original agent-facing format so LLM behavior is unchanged.
         return {
             "error": "MCP_UNAVAILABLE",
             "message": self._error_message,
-            "mcp_unavailable": {
-                "instruction": (
-                    "Tell the user the MCP server is unavailable and include "
-                    "this message. Do not retry unavailable MCP tools."
-                ),
-            },
+            "mcp_unavailable": {"instruction": instruction},
         }
 
 

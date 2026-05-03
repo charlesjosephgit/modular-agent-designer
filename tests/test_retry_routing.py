@@ -188,8 +188,10 @@ def test_agent_node_writes_error_state_with_on_error(monkeypatch: pytest.MonkeyP
     events = asyncio.run(_collect_node_events(node, FailingCtx({})))
 
     assert len(events) == 1
-    assert events[0].actions.state_delta["_error_worker"]["error_type"] == "RuntimeError"
-    assert events[0].actions.state_delta["_error_worker"]["error_message"] == "boom"
+    errors = events[0].actions.state_delta["_error_worker"]
+    assert isinstance(errors, list) and len(errors) == 1
+    assert errors[0]["error_type"] == "RuntimeError"
+    assert "boom" in errors[0]["error_message"]
     assert (
         events[0].actions.state_delta[WORKFLOW_ERROR_OUTPUT_KEY]
         == "Agent 'worker' failed: RuntimeError: boom"
@@ -756,15 +758,15 @@ def test_error_router_matches_typed_regex_wildcard_and_default(tmp_path: Path):
 
     timeout_route = asyncio.run(_run_node_route(
         router,
-        {"_error_caller": {"error_type": "TimeoutError", "error_message": "timed out"}},
+        {"_error_caller": [{"error_type": "TimeoutError", "error_message": "timed out"}]},
     ))
     rate_route = asyncio.run(_run_node_route(
         router,
-        {"_error_caller": {"error_type": "HTTPError", "error_message": "rate limit"}},
+        {"_error_caller": [{"error_type": "HTTPError", "error_message": "rate limit"}]},
     ))
     wildcard_route = asyncio.run(_run_node_route(
         router,
-        {"_error_caller": {"error_type": "ValueError", "error_message": "bad"}},
+        {"_error_caller": [{"error_type": "ValueError", "error_message": "bad"}]},
     ))
 
     assert timeout_route == "_error_0"
@@ -805,7 +807,7 @@ def test_error_router_uses_default_when_no_error_edge_matches(tmp_path: Path):
 
     route = asyncio.run(_run_node_route(
         router,
-        {"_error_caller": {"error_type": "ValueError", "error_message": "bad"}},
+        {"_error_caller": [{"error_type": "ValueError", "error_message": "bad"}]},
     ))
 
     assert route == "_error_1"

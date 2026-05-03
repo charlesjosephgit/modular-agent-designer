@@ -1,0 +1,59 @@
+name: error_list_test
+description: >
+  Tests the _error_<agent> list format from the WorkflowError standardisation.
+  The scorer agent has a strict ScoredResult output_schema but is instructed to
+  produce free-form prose, deliberately triggering a Pydantic ValidationError.
+  With retry: max_retries: 2 the agent fails 3 times total. On exhaustion,
+  _error_scorer is written as a list whose last entry is the terminal agent
+  failure (error_type, error_message, context.attempts). The error_handler
+  receives the full list via {{state._error_scorer}} and summarises it.
+
+models:
+  fast:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+agents:
+  scorer:
+    model: fast
+    output_schema: "examples.schemas.scored_result.ScoredResult"
+    retry:
+      max_retries: 2
+      backoff: fixed
+      delay_seconds: 0
+    instruction: |
+      Evaluate this topic: {{state.user_input.topic}}
+
+      IMPORTANT: Do NOT output JSON. Write a free-form paragraph only.
+      This deliberately triggers a schema validation error.
+
+  success_handler:
+    model: fast
+    instruction: |
+      The scorer produced a valid structured result. Present it clearly.
+      Score data: {{state.scorer}}
+
+  error_handler:
+    model: fast
+    instruction: |
+      The scorer agent failed to produce a valid structured output.
+      Here is the full error list from _error_scorer:
+      {{state._error_scorer}}
+
+      Please summarise:
+      1. How many attempts were made (context.attempts in the last entry)
+      2. What error type occurred (error_type in the last entry)
+      3. The error message (error_message in the last entry)
+
+      Then provide a graceful fallback message to the user explaining the
+      scoring service is temporarily unavailable.
+
+workflow:
+  nodes: [scorer, success_handler, error_handler]
+  entry: scorer
+  edges:
+    - from: scorer
+      to: success_handler
+    - from: scorer
+      to: error_handler
+      on_error: true

@@ -24,9 +24,6 @@ from modular_agent_designer.config.schema import (
     McpStdioToolConfig,
     PythonToolConfig,
 )
-from modular_agent_designer.plugins.tool_availability import (
-    TOOL_UNAVAILABLE_OUTPUT_KEY,
-)
 from modular_agent_designer.tools.registry import build_tool_registry, resolve_tool
 from modular_agent_designer.tools.safety import wrap_adk_base_tool
 
@@ -164,11 +161,14 @@ async def test_mcp_discovery_failure_exposes_unavailable_tool(
 
     assert [tool.name for tool in tools] == ["fs_mcp_unavailable"]
     assert "server offline" in tools[0].description
-    ctx = type("Ctx", (), {"state": {}})()
+    ctx = type("Ctx", (), {"state": {}, "agent_name": "test_agent"})()
     result = await tools[0].run_async(args={}, tool_context=ctx)
     assert result["error"] == "MCP_UNAVAILABLE"
     assert "server offline" in result["message"]
-    assert ctx.state[TOOL_UNAVAILABLE_OUTPUT_KEY] == result["message"]
+    errors = ctx.state.get("_tool_errors_test_agent", [])
+    assert len(errors) == 1
+    assert errors[0]["error_type"] == "MCP_UNAVAILABLE"
+    assert "server offline" in errors[0]["error_message"]
 
 
 # ---------------------------------------------------------------------------

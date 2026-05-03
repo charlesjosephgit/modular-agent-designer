@@ -5,10 +5,7 @@ from typing import Any
 
 from google.adk.tools.base_tool import BaseTool
 
-from modular_agent_designer.plugins.tool_availability import (
-    TOOL_UNAVAILABLE_OUTPUT_KEY,
-    ToolAvailabilityPlugin,
-)
+from modular_agent_designer.plugins.tool_availability import ToolAvailabilityPlugin
 
 
 class _Tool(BaseTool):
@@ -17,8 +14,9 @@ class _Tool(BaseTool):
 
 
 class _ToolContext:
-    def __init__(self) -> None:
+    def __init__(self, agent_name: str = "test_agent") -> None:
         self.state: dict[str, Any] = {}
+        self.agent_name = agent_name
 
 
 async def test_unknown_tool_error_returns_agent_visible_response() -> None:
@@ -38,24 +36,25 @@ async def test_unknown_tool_error_returns_agent_visible_response() -> None:
         error=error,
     )
 
-    assert response is not None
-    assert response["error"] == "TOOL_NOT_AVAILABLE"
-    assert response["message"] == (
+    expected_message = (
         "MCP tool 'fs_list_directory' is not available because the MCP "
         "server/toolset is unavailable."
     )
-    assert ctx.state[TOOL_UNAVAILABLE_OUTPUT_KEY] == response["message"]
-    assert response["tool_not_available"]["requested_tool"] == (
-        "fs_list_directory"
-    )
+    assert response is not None
+    assert response["error"] == "TOOL_NOT_AVAILABLE"
+    assert response["message"] == expected_message
+    assert response["tool_not_available"]["requested_tool"] == "fs_list_directory"
     assert response["tool_not_available"]["arguments"] == {"path": "/tmp"}
     assert response["tool_not_available"]["available_tools"] == [
         "fs_mcp_unavailable",
         "finish_task",
     ]
-    assert response["tool_not_available"]["mcp_unavailable_tool"] == (
-        "fs_mcp_unavailable"
-    )
+    assert response["tool_not_available"]["mcp_unavailable_tool"] == "fs_mcp_unavailable"
+    # State staging key holds the WorkflowError record.
+    errors = ctx.state["_tool_errors_test_agent"]
+    assert isinstance(errors, list) and len(errors) == 1
+    assert errors[0]["error_type"] == "TOOL_NOT_AVAILABLE"
+    assert errors[0]["error_message"] == expected_message
 
 
 async def test_unknown_non_mcp_tool_error_returns_generic_response() -> None:
@@ -80,6 +79,9 @@ async def test_unknown_non_mcp_tool_error_returns_generic_response() -> None:
         "fetch_url, finish_task."
     )
     assert response["tool_not_available"]["mcp_unavailable_tool"] is None
+    errors = ctx.state.get("_tool_errors_test_agent", [])
+    assert len(errors) == 1
+    assert errors[0]["error_type"] == "TOOL_NOT_AVAILABLE"
 
 
 async def test_non_lookup_tool_error_still_raises() -> None:

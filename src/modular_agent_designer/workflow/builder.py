@@ -11,6 +11,7 @@ from google.adk import Workflow
 from google.adk.events.event import Event as AdkEvent
 from google.adk.workflow import Edge, START, node as adk_node
 
+from ..errors import WorkflowError
 from ..config.schema import (
     A2aAgentConfig,
     AgentConfig,
@@ -940,9 +941,21 @@ def _build_unified_error_router(
         error_info = state_dict.get(error_key)
 
         if error_info is not None:
-            is_dict = isinstance(error_info, dict)
-            err_type = error_info.get("error_type", "") if is_dict else ""
-            err_msg = error_info.get("error_message", "") if is_dict else str(error_info)
+            # error_info is a list; the last entry is the terminal agent failure
+            # used for routing decisions. Earlier entries are tool errors.
+            if isinstance(error_info, list) and error_info:
+                terminal = error_info[-1]
+                err = (
+                    WorkflowError.from_dict(terminal)
+                    if isinstance(terminal, dict)
+                    else WorkflowError(error_type="UNKNOWN", error_message=str(terminal))
+                )
+            elif isinstance(error_info, dict):
+                err = WorkflowError.from_dict(error_info)
+            else:
+                err = WorkflowError(error_type="UNKNOWN", error_message=str(error_info))
+            err_type = err.error_type
+            err_msg = err.error_message
 
             # Try typed/wildcard error edges in declaration order.
             for idx, edge in typed_error_edges:

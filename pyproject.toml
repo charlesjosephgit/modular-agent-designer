@@ -1,6 +1,6 @@
 [project]
 name = "modular-agent-designer"
-version = "0.8.12"
+version = "0.9.0"
 description = "A modular framework for designing and orchestrating complex agentic workflows with ease."
 readme = "README.md"
 requires-python = ">=3.11"
