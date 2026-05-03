@@ -25,7 +25,7 @@ from google.adk.workflow import node as adk_node
 
 from ..config.schema import AgentConfig, AgentGenerateContentConfig, AgentThinkingConfig
 from ..plugins.thinking import make_capture_thinking_callback
-from ..state.template import resolve
+from ..state.template import StateReferenceError, resolve
 from ..utils.imports import import_dotted_ref
 
 logger = logging.getLogger(__name__)
@@ -157,11 +157,19 @@ def build_agent_node(
                 f"(got {type(ctx.state).__name__}). This indicates an ADK version mismatch."
             )
         state_dict = ctx.state.to_dict()
-        resolved_instruction = (
-            resolve(instruction_template, state_dict)
-            if instruction_template is not None
-            else None
-        )
+        resolved_instruction: str | None = None
+        if instruction_template is not None:
+            try:
+                resolved_instruction = resolve(instruction_template, state_dict)
+            except StateReferenceError as exc:
+                logger.warning(
+                    "node '%s': state template reference missing — substituting "
+                    "empty string for unresolved placeholder(s). Detail: %s",
+                    agent_name, exc,
+                )
+                resolved_instruction = resolve(
+                    instruction_template, state_dict, missing=""
+                )
 
         logger.info("node '%s' start", agent_name)
 

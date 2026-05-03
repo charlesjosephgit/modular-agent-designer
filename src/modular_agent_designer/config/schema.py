@@ -409,11 +409,27 @@ class DefaultRouteConfig(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
     to: str
-    condition: Union[
-        EvalCondition, str, int, bool, list[Union[str, int, bool]]
-    ]
+    condition: Optional[
+        Union[EvalCondition, str, int, bool, list[Union[str, int, bool]]]
+    ] = None
     from_: Optional[list[str]] = Field(default=None, alias="from")
     exclude: list[str] = Field(default_factory=list)
+    on_error: bool = False
+
+    @model_validator(mode="after")
+    def _validate_default_route(self) -> "DefaultRouteConfig":
+        if self.condition == "default":
+            self.condition = "__DEFAULT__"
+        if not self.on_error and self.condition is None:
+            raise ValueError(
+                "default_routes requires 'condition' when 'on_error' is false"
+            )
+        if self.on_error and self.condition is not None and self.condition != "__DEFAULT__":
+            raise ValueError(
+                "default_routes with 'on_error: true' only accepts "
+                "'condition: default' or no condition"
+            )
+        return self
 
 
 def _detect_sub_agent_cycles(agents: dict[str, Any]) -> None:

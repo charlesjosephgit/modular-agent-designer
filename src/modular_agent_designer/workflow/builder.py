@@ -542,18 +542,24 @@ def _apply_default_routes(
     """Inject workflow-level conditional fallback routes.
 
     Default routes are intentionally conservative:
-    - they do not apply to sources with explicit normal ``condition: default``;
-    - they do not apply to sources with unconditional normal routes, because
-      those routes would still fire alongside an injected conditional route;
+    - they do not apply to sources with explicit ``condition: default`` of the
+      same kind (normal or on_error);
+    - they do not apply to sources with unconditional routes of the same kind;
     - they do not apply from the handler node to itself.
+
+    When ``on_error: true`` is set on the default route, the injected edges are
+    on_error edges that fire when the source node raises an exception.
     """
     if not cfg.workflow.default_routes:
         return edges
 
     result = list(edges)
     normal_by_src: dict[str, list[EdgeConfig]] = defaultdict(list)
+    error_by_src: dict[str, list[EdgeConfig]] = defaultdict(list)
     for edge in result:
-        if not edge.on_error:
+        if edge.on_error:
+            error_by_src[edge.from_].append(edge)
+        else:
             normal_by_src[edge.from_].append(edge)
 
     for default_route in cfg.workflow.default_routes:
@@ -563,27 +569,44 @@ def _apply_default_routes(
             else cfg.workflow.nodes
         )
         excluded = set(default_route.exclude)
-        for src_name in source_names:
-            if src_name == default_route.to or src_name in excluded:
-                continue
 
-            src_normal = normal_by_src.get(src_name, [])
-            has_explicit_default = any(
-                edge.condition == "__DEFAULT__" for edge in src_normal
-            )
-            has_unconditional = any(
-                edge.condition is None for edge in src_normal
-            )
-            if has_explicit_default or has_unconditional:
-                continue
-
-            edge = EdgeConfig(
-                from_=src_name,
-                to=default_route.to,
-                condition=default_route.condition,
-            )
-            result.append(edge)
-            normal_by_src[src_name].append(edge)
+        if default_route.on_error:
+            for src_name in source_names:
+                if src_name == default_route.to or src_name in excluded:
+                    continue
+                src_errors = error_by_src.get(src_name, [])
+                has_explicit_default = any(
+                    e.condition == "__DEFAULT__" for e in src_errors
+                )
+                has_unconditional = any(e.condition is None for e in src_errors)
+                if has_explicit_default or has_unconditional:
+                    continue
+                edge = EdgeConfig(
+                    from_=src_name,
+                    to=default_route.to,
+                    on_error=True,
+                    condition=default_route.condition,
+                )
+                result.append(edge)
+                error_by_src[src_name].append(edge)
+        else:
+            for src_name in source_names:
+                if src_name == default_route.to or src_name in excluded:
+                    continue
+                src_normal = normal_by_src.get(src_name, [])
+                has_explicit_default = any(
+                    e.condition == "__DEFAULT__" for e in src_normal
+                )
+                has_unconditional = any(e.condition is None for e in src_normal)
+                if has_explicit_default or has_unconditional:
+                    continue
+                edge = EdgeConfig(
+                    from_=src_name,
+                    to=default_route.to,
+                    condition=default_route.condition,
+                )
+                result.append(edge)
+                normal_by_src[src_name].append(edge)
 
     return result
 

@@ -1,0 +1,49 @@
+name: schema_mismatch_test
+description: >
+  Tests output schema mismatch error handling via default_routes with on_error: true.
+  The scorer agent uses a strict ScoredResult schema (score: int 0-100, category: A/B/C,
+  summary: str min 10 chars). It is deliberately instructed to produce free-form prose
+  instead of JSON, which causes a Pydantic validation error. The mismatch_handler catches
+  this via a workflow-level on_error default route, logs the error, and returns a
+  graceful fallback message.
+
+models:
+  fast:
+    provider: ollama
+    model: "ollama_chat/gemma4:e4b"
+
+agents:
+  scorer:
+    model: fast
+    output_schema: "examples.schemas.scored_result.ScoredResult"
+    instruction: |
+      Evaluate this topic: {{state.user_input.topic}}
+
+      Intentionally ignore the structured output format — write a free-form paragraph
+      response without any JSON. This will trigger a schema validation error.
+
+  success_handler:
+    model: fast
+    instruction: |
+      The scorer produced a valid structured result. Present it clearly.
+      Score: {{state.scorer}}
+
+  mismatch_handler:
+    model: fast
+    instruction: |
+      The scorer agent failed to produce a valid structured output.
+      Error details: {{state._error_scorer}}
+
+      Explain to the user that the response did not match the expected schema
+      (score: int 0-100, category: A/B/C, summary: str) and provide a graceful fallback.
+
+workflow:
+  nodes: [scorer, success_handler, mismatch_handler]
+  entry: scorer
+  default_routes:
+    - to: mismatch_handler
+      on_error: true
+      exclude: [mismatch_handler]
+  edges:
+    - from: scorer
+      to: success_handler

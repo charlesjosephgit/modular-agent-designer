@@ -36,7 +36,12 @@ def _walk(path: str, state: dict[str, Any]) -> tuple[Any, bool]:
     return current, True
 
 
-def resolve(text: str, state: dict[str, Any]) -> str:
+def resolve(
+    text: str,
+    state: dict[str, Any],
+    *,
+    missing: str | None = None,
+) -> str:
     """Replace all ``{{state.<dotted.path>}}`` in *text* with values from *state*.
 
     Also processes conditional blocks::
@@ -45,8 +50,11 @@ def resolve(text: str, state: dict[str, Any]) -> str:
 
     The inner content is included only when the key exists and is truthy.
 
-    Raises StateReferenceError naming the exact missing key if any
-    ``{{state.x}}`` reference outside a conditional block cannot be resolved.
+    When *missing* is ``None`` (default), raises ``StateReferenceError`` for any
+    unresolvable ``{{state.x}}`` reference outside a conditional block.
+    When *missing* is a string, that string is substituted instead and no error
+    is raised — callers can log warnings as needed.
+
     Non-string values are stringified:
       - Pydantic models: model_dump_json()
       - dicts: json.dumps()
@@ -69,6 +77,8 @@ def resolve(text: str, state: dict[str, Any]) -> str:
         path = m.group(1)
         value, found = _walk(path, state)
         if not found:
+            if missing is not None:
+                return missing
             keys = path.split(".")
             # Build a helpful error
             current: Any = state
