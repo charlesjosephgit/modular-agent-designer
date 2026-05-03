@@ -1,10 +1,13 @@
 """Tests for tools/registry.py and ToolConfig schema variants."""
 from __future__ import annotations
 
+import inspect
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
+from google.adk.tools import BaseTool
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import (
     SseConnectionParams,
@@ -21,6 +24,7 @@ from modular_agent_designer.config.schema import (
     PythonToolConfig,
 )
 from modular_agent_designer.tools.registry import build_tool_registry, resolve_tool
+from modular_agent_designer.tools.safety import wrap_adk_base_tool
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +298,24 @@ def test_external_sync_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert tool(4) == 8
 
 
+def test_external_sync_tool_exception_returns_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_ext_pkg(
+        tmp_path,
+        "ext_sync_fail",
+        "def boom(x: int) -> int:\n    raise RuntimeError(f'bad {x}')\n",
+        monkeypatch,
+    )
+
+    cfg = PythonToolConfig(type="python", ref="ext_sync_fail.tools.boom")
+    tool = resolve_tool("boom", cfg)
+
+    assert tool(4) == {
+        "error": "Tool 'boom' failed with RuntimeError: bad 4"
+    }
+
+
 def test_external_async_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _make_ext_pkg(tmp_path, "ext_async", "async def fetch(url: str) -> str:\n    return url\n", monkeypatch)
 
@@ -302,17 +324,41 @@ def test_external_async_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert callable(tool)
 
 
-def test_external_callable_class(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_external_async_tool_exception_returns_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_ext_pkg(
+        tmp_path,
+        "ext_async_fail",
+        "async def fetch(url: str) -> str:\n    raise ValueError(f'bad {url}')\n",
+        monkeypatch,
+    )
+
+    cfg = PythonToolConfig(type="python", ref="ext_async_fail.tools.fetch")
+    tool = resolve_tool("fetch", cfg)
+
+    assert await tool("https://example.com") == {
+        "error": "Tool 'fetch' failed with ValueError: bad https://example.com"
+    }
+
+
+def test_external_callable_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _make_ext_pkg(
         tmp_path,
         "ext_class",
-        "class MyTool:\n    def __call__(self, x):\n        return x\n\nmy_tool = MyTool()\n",
+        "class MyTool:\n"
+        "    def __call__(self, x):\n"
+        "        return x\n\n"
+        "my_tool = MyTool()\n",
         monkeypatch,
     )
 
     cfg = PythonToolConfig(type="python", ref="ext_class.tools.my_tool")
     tool = resolve_tool("my_tool", cfg)
     assert callable(tool)
+    assert tool.__name__ == "MyTool"
 
 
 def test_noncallable_ref_raises_type_error(
@@ -345,3 +391,38 @@ def test_builtin_ref_form_equivalent_to_python(
     builtin_cfg = BuiltinToolConfig(type="builtin", ref="ext_equiv_builtin.tools.fn")
     python_cfg = PythonToolConfig(type="python", ref="ext_equiv_builtin.tools.fn")
     assert resolve_tool("fn", builtin_cfg)(99) == resolve_tool("fn", python_cfg)(99) == 99
+
+
+def test_tool_wrapper_preserves_signature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_ext_pkg(
+        tmp_path,
+        "ext_signature",
+        "def fn(x: int, label: str = 'a') -> str:\n    return f'{label}:{x}'\n",
+        monkeypatch,
+    )
+
+    cfg = PythonToolConfig(type="python", ref="ext_signature.tools.fn")
+    tool = resolve_tool("fn", cfg)
+
+    assert str(inspect.signature(tool)) == "(x: int, label: str = 'a') -> str"
+
+
+class _FailingBaseTool(BaseTool):
+    def __init__(self) -> None:
+        super().__init__(name="remote_boom", description="fails")
+
+    async def run_async(
+        self, *, args: dict[str, Any], tool_context: Any
+    ) -> Any:
+        raise RuntimeError(f"remote bad {args['x']}")
+
+
+async def test_adk_base_tool_exception_returns_error() -> None:
+    tool = wrap_adk_base_tool(_FailingBaseTool())
+
+    assert await tool.run_async(args={"x": 7}, tool_context=None) == {
+        "error": "Tool 'remote_boom' failed with RuntimeError: remote bad 7"
+    }

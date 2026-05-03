@@ -1,10 +1,9 @@
 """ADK plugin: short-circuit duplicate tool calls within the same session.
 
-When a model calls the same tool with identical arguments more than once,
-the plugin intercepts the second call via before_tool_callback and returns a
-stop message instead of re-executing the tool RPC.  The first call is always
-allowed through; after_tool_callback marks the (tool, args) pair as seen in
-session state so the flag persists across rerun_on_resume cycles.
+When a model calls the same successfully completed tool with identical
+arguments more than once, the plugin intercepts the second call and returns a
+stop message instead of re-executing the tool RPC. Failed calls are not marked
+as seen, so the model can retry them.
 """
 from __future__ import annotations
 
@@ -22,7 +21,7 @@ _STATE_PREFIX = "__mda_dedup__"
 
 
 class DeduplicateToolCallsPlugin(BasePlugin):
-    """Return a stop-hint for repeated (tool, args) pairs in the same session."""
+    """Return a stop-hint for repeated tool calls in the same session."""
 
     def __init__(self) -> None:
         super().__init__(name="dedup_tool_calls")
@@ -35,15 +34,27 @@ class DeduplicateToolCallsPlugin(BasePlugin):
         tool_context: "ToolContext",
     ) -> Optional[dict]:
         key = _state_key(tool.name, tool_args)
-        if tool_context.state.get(key):
+        previous_result = tool_context.state.get(key)
+        if previous_result is not None:
             return {
                 "error": "DUPLICATE_TOOL_CALL",
                 "message": (
-                    f"You already called '{tool.name}' with these exact arguments "
+                    f"You already called '{tool.name}' with these exact "
+                    "arguments "
                     "and the result is already in the conversation context. "
                     "Do NOT repeat this tool call. "
-                    "Use the result you already received to write your final answer now."
+                    "Use the result you already received to write your final "
+                    "answer now."
                 ),
+                "duplicate_tool_call": {
+                    "tool_name": tool.name,
+                    "arguments": tool_args,
+                    "previous_result": previous_result,
+                    "instruction": (
+                        "Do not call this tool again with the same arguments. "
+                        "Use previous_result as the tool result."
+                    ),
+                },
             }
         return None
 
@@ -55,9 +66,20 @@ class DeduplicateToolCallsPlugin(BasePlugin):
         tool_context: "ToolContext",
         result: dict,
     ) -> Optional[dict]:
+        if _is_error_result(result):
+            return None
         key = _state_key(tool.name, tool_args)
-        tool_context.state[key] = 1
+        tool_context.state[key] = result
         return None
+
+
+def _is_error_result(result: Any) -> bool:
+    if isinstance(result, str):
+        return result.strip().upper().startswith("ERROR")
+    if not isinstance(result, dict):
+        return False
+    error = result.get("error")
+    return isinstance(error, str) and bool(error.strip())
 
 
 def _state_key(tool_name: str, tool_args: dict[str, Any]) -> str:

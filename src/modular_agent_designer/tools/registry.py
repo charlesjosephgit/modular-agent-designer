@@ -20,6 +20,15 @@ from ..config.schema import (
 )
 from ..utils.imports import import_dotted_ref
 from . import BUILTIN_TOOLS
+from .safety import wrap_adk_base_tool, wrap_callable_tool
+
+
+class SafeMcpToolset(McpToolset):
+    """MCP toolset that returns tool execution errors as results."""
+
+    async def get_tools(self, readonly_context: Any = None) -> list[Any]:
+        tools = await super().get_tools(readonly_context=readonly_context)
+        return [wrap_adk_base_tool(tool) for tool in tools]
 
 
 def _resolve_callable(name: str, ref: str) -> Callable[..., Any]:
@@ -30,7 +39,7 @@ def _resolve_callable(name: str, ref: str) -> Callable[..., Any]:
             f"{type(obj).__name__}, which is not callable. "
             "Tool refs must point at a function or callable instance."
         )
-    return obj
+    return wrap_callable_tool(name, obj)
 
 
 def resolve_tool(
@@ -45,7 +54,9 @@ def resolve_tool(
                     f"Tool '{name}': unknown builtin '{cfg.name}'. "
                     f"Available builtins: {available}"
                 )
-            return tool  # type: ignore[return-value]
+            return wrap_callable_tool(  # type: ignore[arg-type, return-value]
+                name, tool
+            )
         return _resolve_callable(name, cfg.ref)  # type: ignore[arg-type]
     if isinstance(cfg, PythonToolConfig):
         return _resolve_callable(name, cfg.ref)
@@ -69,7 +80,7 @@ def resolve_tool(
         raise ValueError(
             f"Tool '{name}': unsupported config {type(cfg).__name__}"
         )
-    return McpToolset(
+    return SafeMcpToolset(
         connection_params=params,
         tool_filter=cfg.tool_filter,
         tool_name_prefix=cfg.tool_name_prefix,
