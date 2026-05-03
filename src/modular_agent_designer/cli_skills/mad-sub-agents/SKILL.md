@@ -193,13 +193,28 @@ In scaffolded projects, put schemas under `schemas/` and reference them by dotte
 output_schema: my_agent.schemas.product.Product
 ```
 
-Downstream agents receive the structured result through state:
+Route immediately from the schema-producing node with `output.<field>`:
+
+```yaml
+workflow:
+  edges:
+    - from: extractor
+      to: product_handler
+      condition:
+        eval: "output.category == 'hardware'"
+```
+
+Downstream agents receive the committed structured result through state:
 
 ```yaml
 instruction: |
   Product JSON:
   {{state.extractor}}
 ```
+
+Use `state.<node>` or `state.get(...)` when a later source node reads an earlier
+node's stored result. Use `output.<field>` only for the current source node's
+raw output during route evaluation.
 
 Use `output_key` to rename the state key:
 

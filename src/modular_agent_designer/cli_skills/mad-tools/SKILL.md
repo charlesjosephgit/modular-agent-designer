@@ -11,6 +11,7 @@ Tools are resolved at build time and attached to ADK agents through each agent's
 
 - The workflow needs HTTP fetches, local Python functions, file reads, or external MCP tools.
 - An agent references a tool alias that is missing or broken.
+- A tool exception, MCP discovery failure, or unavailable tool call needs to be debugged.
 - You need to choose between builtin tools, Python tools, and MCP transports.
 
 Load `mad-create-workflow` for end-to-end workflow creation, `mad-routing` for graph behavior, and `mad-sub-agents` when tools are part of a coordinator/specialist design.
@@ -25,6 +26,7 @@ Load `mad-create-workflow` for end-to-end workflow creation, `mad-routing` for g
 3. Give every tool a clear YAML alias and attach that alias to only the agents that need it.
 4. For MCP servers, prefer `tool_filter` and `tool_name_prefix` to reduce ambiguity.
 5. Validate with `mad list` and `mad run --dry-run`.
+6. Use `mad run ... --verbose` only when you need the tool-call event stream.
 
 ## Tool Type Decision
 
@@ -111,6 +113,28 @@ def word_count(text: str) -> int:
     return len(text.split())
 ```
 
+## Tool Failure Behavior
+
+MAD wraps builtin tools, Python callable tools, and ADK `BaseTool` instances so
+tool invocation exceptions become agent-visible tool results instead of
+automatically crashing the workflow.
+
+```python
+def explode(reason: str = "intentional tool failure") -> dict:
+    raise RuntimeError(reason)
+```
+
+If an agent calls this tool, it receives a result shaped like:
+
+```json
+{"error": "Tool 'explode' failed with RuntimeError: intentional tool failure"}
+```
+
+For workflows that must branch on tool success or failure, pair clear agent
+instructions with an `output_schema`, then route on structured fields. Load
+`mad-routing` for `default_routes` and eval conditions such as
+`output.agent_status == 'fail'`.
+
 ## MCP stdio Tools
 
 Use `mcp_stdio` when MAD should start the MCP server subprocess:
@@ -132,6 +156,8 @@ Notes:
 - `${VAR}` values are expanded at YAML load time and fail immediately when unset.
 - The MCP connection is opened lazily on first tool use.
 - ADK Runner handles cleanup.
+- If MCP discovery fails, MAD exposes an `*_mcp_unavailable` fallback tool that
+  tells the agent the server/toolset is unavailable.
 
 ## MCP SSE Tools
 
@@ -183,6 +209,17 @@ tools:
 ```
 
 Without prefixes, two servers that expose `read_file` can confuse the model or collide in the tool namespace.
+
+## Unavailable Tool Calls
+
+If a model calls a tool name that ADK reports as not found, MAD returns an
+agent-visible `TOOL_NOT_AVAILABLE` result when possible. For MCP toolsets, this
+result points back to the matching `*_mcp_unavailable` fallback tool when one is
+available.
+
+Agent instructions should tell the model not to invent MCP tool names and to
+report unavailable toolsets instead of retrying the same missing tool. Use
+`tool_filter` and `tool_name_prefix` to keep exposed names predictable.
 
 ## Complete Tool Example
 

@@ -404,6 +404,18 @@ class EdgeConfig(BaseModel):
         return self
 
 
+class DefaultRouteConfig(BaseModel):
+    """Workflow-level fallback route applied to multiple source nodes."""
+
+    model_config = ConfigDict(populate_by_name=True)
+    to: str
+    condition: Union[
+        EvalCondition, str, int, bool, list[Union[str, int, bool]]
+    ]
+    from_: Optional[list[str]] = Field(default=None, alias="from")
+    exclude: list[str] = Field(default_factory=list)
+
+
 def _detect_sub_agent_cycles(agents: dict[str, Any]) -> None:
     """Raise ValueError if sub_agent references form a cycle."""
     adj: dict[str, list[str]] = {}
@@ -489,12 +501,30 @@ class WorkflowConfig(BaseModel):
     edges: list[EdgeConfig]
     entry: str
     max_llm_calls: int = 20
+    default_routes: list[DefaultRouteConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_workflow(self) -> "WorkflowConfig":
         node_set = set(self.nodes)
         if self.entry not in node_set:
             raise ValueError(f"entry '{self.entry}' not found in nodes list")
+
+        for route in self.default_routes:
+            if route.to not in node_set:
+                raise ValueError(
+                    f"default_routes target '{route.to}' references unknown node"
+                )
+            if route.from_ is not None:
+                for src in route.from_:
+                    if src not in node_set:
+                        raise ValueError(
+                            f"default_routes from '{src}' references unknown node"
+                        )
+            for src in route.exclude:
+                if src not in node_set:
+                    raise ValueError(
+                        f"default_routes exclude '{src}' references unknown node"
+                    )
 
         # Collect edges that have loop config for cycle-tolerance later.
         loop_edges: set[tuple[str, str]] = set()

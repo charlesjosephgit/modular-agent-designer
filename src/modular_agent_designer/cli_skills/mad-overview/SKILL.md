@@ -19,7 +19,7 @@ For implementation tasks, prefer the owner skill:
 |---|---|
 | Build a workflow from scratch | `mad-create-workflow` |
 | Add builtin, Python, or MCP tools | `mad-tools` |
-| Add conditions, loops, retries, errors, or parallel fan-out | `mad-routing` |
+| Add conditions, default routes, loops, retries, errors, or parallel fan-out | `mad-routing` |
 | Add sub-agents, runtime skills, schemas, A2A, or custom nodes | `mad-sub-agents` |
 
 ## Agent Workflow
@@ -78,6 +78,7 @@ agents:
 workflow:
   nodes: [researcher]
   entry: researcher
+  default_routes: []
   edges: []
 ```
 
@@ -162,6 +163,11 @@ Missing required state references raise `StateReferenceError` with the missing p
 - `skills:` declares runtime ADK skills that agents can load via `SkillToolset`. Load `mad-sub-agents` for details.
 - `sub_agents:` gives a parent LLM dynamic delegation power. Sub-agents are not graph nodes. Load `mad-sub-agents` for details.
 
+Tool invocation exceptions are returned to agents as inspectable tool results.
+If MCP discovery fails, MAD exposes an `*_mcp_unavailable` fallback tool; if a
+model calls a missing tool name, it receives an agent-visible unavailable-tool
+response. Load `mad-tools` when changing or debugging this behavior.
+
 ## Workflow Graph
 
 ```yaml
@@ -169,6 +175,10 @@ workflow:
   nodes: [classifier, specialist, fallback]
   entry: classifier
   max_llm_calls: 20
+  default_routes:
+    - to: fallback
+      condition:
+        eval: "output.status == 'fail'"
   edges:
     - from: classifier
       to: specialist
@@ -184,6 +194,7 @@ workflow:
 - Exact-match and list conditions.
 - `condition: {eval: "..."}` expressions.
 - `condition: default` fallback.
+- Workflow-level `default_routes` for shared conditional fallbacks.
 - `switch:` / `cases:` sugar.
 - Dynamic `to: "{{state.router}}"` with `allowed_targets`.
 - Controlled loops with `loop:`.
@@ -192,14 +203,24 @@ workflow:
 
 Load `mad-routing` before editing non-trivial graph behavior.
 
+Eval conditions can use `state` for the full session state, `input` for the
+source output as stripped text, `output` for the raw source output including
+structured fields, `raw_input` for compatibility, and `re` for regex matching.
+`state` and `output` support dot access, such as `state.user_input.topic` and
+`output.agent_status`.
+
+If an agent fails after retries and there is no matching `on_error` route, MAD
+stops the workflow and surfaces a final failure message instead of running
+normal downstream edges.
+
 ## CLI Commands
 
 | Command | Purpose |
 |---|---|
 | `mad create <agent_name>` | Scaffold a runnable workflow project |
 | `mad validate <workflow.yaml>` | Validate YAML schema |
-| `mad list <workflow.yaml>` | Print models, tools, agents, and graph details |
-| `mad diagram <workflow.yaml>` | Render a Mermaid graph |
+| `mad list <workflow.yaml>` | Print models, tools, agents, graph details, and configured default routes |
+| `mad diagram <workflow.yaml>` | Render a Mermaid graph, including default-route fallback edges |
 | `mad run <workflow.yaml> --input '{"key":"value"}'` | Execute a workflow |
 | `mad run <workflow.yaml> --input-file input.json` | Execute using JSON from a file |
 | `mad run <workflow.yaml> --input '{"key":"value"}' --verbose` | Execute and stream workflow-node, agent, sub-agent, and tool events |

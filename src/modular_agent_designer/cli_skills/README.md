@@ -32,8 +32,8 @@ After installation, a coding agent can auto-select the right skill from `.agents
 |---|---|
 | Understand the DSL, CLI, state model, or available YAML fields | `mad-overview` |
 | Create a new workflow or turn an idea into runnable YAML | `mad-create-workflow` |
-| Add builtin, Python, MCP stdio, MCP SSE, or MCP HTTP tools | `mad-tools` |
-| Add branches, switch/case, dynamic destinations, loops, retries, error routes, or parallel fan-out | `mad-routing` |
+| Add builtin, Python, MCP stdio, MCP SSE, MCP HTTP tools, or debug tool failures | `mad-tools` |
+| Add branches, default routes, switch/case, dynamic destinations, loops, retries, error routes, or parallel fan-out | `mad-routing` |
 | Add coordinators, sub-agents, runtime skills, structured outputs, A2A agents, or custom nodes | `mad-sub-agents` |
 
 Agent rule of thumb: load `mad-overview` for orientation, then switch to the narrow skill that owns the change.
@@ -48,6 +48,10 @@ When using these skills, a coding agent should:
 4. Validate with `mad list`, `mad diagram`, and `mad run --dry-run` when the workflow can be built without secrets or services.
 5. Run a real `mad run ... --input ...` only when model credentials and local services are available.
 6. Add `--verbose` to `mad run` only when you need the intermediate workflow-node, agent, sub-agent, and tool event stream. Final output and final state print by default.
+
+Use `mad-routing` for `workflow.default_routes` and eval route conditions such
+as `output.agent_status == 'fail'`. Use `mad-tools` for Python tool exceptions,
+MCP discovery failures, and unavailable tool-call behavior.
 
 ## Other Assistant CLIs
 

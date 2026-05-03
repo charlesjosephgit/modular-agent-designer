@@ -221,6 +221,12 @@ tools:
 ```
 
 Use YAML for wiring. Use Python only when the tool itself is custom logic.
+Tool invocation exceptions are returned to the agent as structured tool results
+so the agent can inspect the failure and route or respond accordingly. If an MCP
+server cannot be reached during tool discovery, MAD exposes an
+`*_mcp_unavailable` fallback tool. If a model calls a tool name that is not
+available, the agent receives a tool-visible "not available" response instead
+of an opaque crash.
 
 ### Agents
 
@@ -323,6 +329,27 @@ workflow:
 
 Example: [`examples/workflows/output_schema_routing.yaml`](examples/workflows/output_schema_routing.yaml)
 
+Route conditions can also inspect the source node's raw structured output with
+`output`, which is useful immediately after an `output_schema` agent:
+
+```yaml
+workflow:
+  default_routes:
+    - to: expected_failure_reporter
+      condition:
+        eval: "output.agent_status == 'fail'"
+```
+
+Eval conditions can use:
+
+| Name | Value |
+|---|---|
+| `state` | Full workflow state; supports `state.user_input.topic` and `state.get(...)` |
+| `input` | Source output coerced to stripped text |
+| `output` | Raw source output, including structured output fields |
+| `raw_input` | Raw source output, retained for compatibility |
+| `re` | Python regex module |
+
 ### Runtime Skills
 
 Runtime skills are reusable instruction packages that agents can load through
@@ -391,6 +418,43 @@ Examples:
 - [`examples/workflows/switch_example.yaml`](examples/workflows/switch_example.yaml)
 - [`examples/workflows/dynamic_router.yaml`](examples/workflows/dynamic_router.yaml)
 
+### Workflow-Level Default Routes
+
+Use `workflow.default_routes` when many nodes should share the same conditional
+fallback. A default route injects conditional fallback edges at build time and
+is shown by `mad list` and `mad diagram`.
+
+```yaml
+workflow:
+  nodes: [tool_caller, final_reporter, expected_failure_reporter]
+  entry: tool_caller
+  default_routes:
+    - to: expected_failure_reporter
+      condition:
+        eval: "output.agent_status == 'fail'"
+      exclude: [final_reporter]
+  edges:
+    - from: tool_caller
+      to: final_reporter
+      condition:
+        eval: "state.tool_caller.agent_status == 'success'"
+```
+
+Fields:
+
+| Field | Meaning |
+|---|---|
+| `to` | Fallback target node |
+| `condition` | Same condition forms as normal edges, including `eval` |
+| `from` | Optional list of source nodes to apply this route to |
+| `exclude` | Optional list of source nodes to skip |
+
+Default routes skip self-routes to their target. They are not injected for a
+source that already has an unconditional edge or an explicit
+`condition: default` edge.
+
+Example: [`examples/workflows/tool_exception_test.yaml`](examples/workflows/tool_exception_test.yaml)
+
 ### Switch/Case Routing
 
 Use `switch` when one state value should choose from several named routes. This
@@ -444,7 +508,9 @@ Examples:
 
 ### Error Handling
 
-Route failures to recovery agents after retries are exhausted.
+Route failures to recovery agents after retries are exhausted. If an agent fails
+and there is no matching `on_error` route, MAD stops the workflow and surfaces a
+final failure message instead of continuing along normal edges.
 
 ```yaml
 edges:
@@ -462,7 +528,10 @@ edges:
     condition: default
 ```
 
-Example: [`examples/workflows/typed_errors.yaml`](examples/workflows/typed_errors.yaml)
+Examples:
+
+- [`examples/workflows/typed_errors.yaml`](examples/workflows/typed_errors.yaml)
+- [`examples/workflows/agent_failure_stop.yaml`](examples/workflows/agent_failure_stop.yaml)
 
 ### Parallel Fan-Out
 
@@ -548,6 +617,8 @@ Start here:
 | [`parallel_workflow.yaml`](examples/workflows/parallel_workflow.yaml) | Parallel fan-out and join |
 | [`sub_agent_example.yaml`](examples/workflows/sub_agent_example.yaml) | Parent agent with specialists |
 | [`output_schema_routing.yaml`](examples/workflows/output_schema_routing.yaml) | Structured output and routing |
+| [`tool_exception_test.yaml`](examples/workflows/tool_exception_test.yaml) | Tool failure as structured output plus default routes |
+| [`agent_failure_stop.yaml`](examples/workflows/agent_failure_stop.yaml) | Agent failure stopping downstream execution |
 | [`skills_example.yaml`](examples/workflows/skills_example.yaml) | Runtime skills attached to an agent |
 
 All workflow examples live in [`examples/workflows`](examples/workflows).
@@ -572,9 +643,9 @@ Available guides:
 |---|---|
 | `mad-overview` | Full project and YAML reference |
 | `mad-create-workflow` | Building a workflow from scratch |
-| `mad-tools` | Builtin, Python, and MCP tools |
-| `mad-routing` | Branching, loops, errors, and parallel edges |
-| `mad-sub-agents` | Sub-agents, skills, schemas, and custom nodes |
+| `mad-tools` | Builtin, Python, MCP tools, and tool failure behavior |
+| `mad-routing` | Branching, default routes, loops, errors, and parallel edges |
+| `mad-sub-agents` | Sub-agents, skills, schemas, structured outputs, and custom nodes |
 
 See [`src/modular_agent_designer/cli_skills/README.md`](src/modular_agent_designer/cli_skills/README.md)
 for setup details for Codex, Claude Code, Gemini CLI, and ChatGPT CLI.

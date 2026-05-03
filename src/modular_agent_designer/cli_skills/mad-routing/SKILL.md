@@ -9,7 +9,7 @@ Routing determines which workflow node runs next. Use graph edges for determinis
 
 ## Use This When
 
-- The workflow needs branches, classifier routing, switch/case, or dynamic destinations.
+- The workflow needs branches, classifier routing, workflow-level default routes, switch/case, or dynamic destinations.
 - The workflow needs a review loop, retry policy, typed error fallback, or parallel fan-out.
 - A graph validation error mentions mixed edge types, unknown nodes, default routes, or cycles.
 
@@ -31,6 +31,7 @@ Load `mad-create-workflow` for initial workflow design and `mad-sub-agents` for 
 | Match a small set of exact labels | `condition: "label"` plus `condition: default` |
 | Match several labels to one node | `condition: [a, b, c]` |
 | Check state or regex | `condition: {eval: "..."}` |
+| Apply one fallback condition to many nodes | `workflow.default_routes` |
 | Route on one state value | `switch:` with `cases:` |
 | Let a router output the next node name | Dynamic `to: "{{state.router}}"` with `allowed_targets` |
 | Review/revision cycle | Back edge with `loop:` |
@@ -99,18 +100,26 @@ edges:
     to: urgent_handler
     condition:
       eval: "bool(re.search(r'urgent|asap', input, re.IGNORECASE))"
+
+  - from: tool_caller
+    to: failure_handler
+    condition:
+      eval: "output.agent_status == 'fail'"
 ```
 
 Available eval names:
 
 | Name | Value |
 |---|---|
-| `state` | Full session state dict |
+| `state` | Full session state dict; supports dot access and `.get(...)` |
 | `input` | Source output coerced to stripped string |
-| `raw_input` | Raw source output |
+| `output` | Raw source output, including structured output fields |
+| `raw_input` | Raw source output, retained for compatibility |
 | `re` | Python regex module |
 
-Use `state.get(...)` rather than `state[...]` so missing keys evaluate cleanly to `False`.
+Use `state.get(...)` rather than `state[...]` when missing keys should evaluate
+cleanly to `False`. Use `output.<field>` when routing immediately on the source
+node's structured output.
 
 ## Default Route
 
@@ -126,6 +135,51 @@ Rules:
 - Only one default edge per source.
 - It is evaluated after all non-default conditions.
 - Do not use it as the only edge from a source unless you really mean "always route here"; an unconditional edge is clearer.
+
+## Workflow-Level Default Routes
+
+Use `workflow.default_routes` when many source nodes should share one
+conditional fallback, such as routing any structured tool-call failure to a
+single handler.
+
+```yaml
+agents:
+  tool_caller:
+    model: smart
+    output_schema: examples.schemas.tool_status.ToolCallStatus
+    tools: [explode]
+    instruction: |
+      Call the tool and return agent_status as success or fail.
+
+workflow:
+  nodes: [tool_caller, final_reporter, expected_failure_reporter]
+  entry: tool_caller
+  default_routes:
+    - to: expected_failure_reporter
+      condition:
+        eval: "output.agent_status == 'fail'"
+      exclude: [final_reporter]
+  edges:
+    - from: tool_caller
+      to: final_reporter
+      condition:
+        eval: "state.tool_caller.agent_status == 'success'"
+```
+
+Fields:
+
+| Field | Notes |
+|---|---|
+| `to` | Required fallback target node |
+| `condition` | Required condition using the same forms as normal edges |
+| `from` | Optional source-node allowlist |
+| `exclude` | Optional source-node blocklist |
+
+Default routes are injected at build time. They skip self-routes to the target
+and are not injected for sources that already have an unconditional normal edge
+or an explicit `condition: default` edge. `mad list` prints the configured
+`default_routes`; `mad diagram` renders their injected fallback edges as dotted
+edges.
 
 ## Switch / Case
 
@@ -233,7 +287,10 @@ agents:
       delay_seconds: 1.0
 ```
 
-After retries are exhausted, error details are written to state and `on_error` routes can fire.
+After retries are exhausted, error details are written to state and `on_error`
+routes can fire. If no matching `on_error` route exists, the workflow stops and
+MAD surfaces a final agent-failure message instead of continuing along normal
+edges.
 
 ## Error Routing
 
@@ -289,6 +346,19 @@ edges:
     condition: default
 ```
 
+For the immediate source node output, prefer `output.<field>`:
+
+```yaml
+edges:
+  - from: validator
+    to: reject_handler
+    condition:
+      eval: "output.is_valid == False"
+```
+
+Use `state.<node>` when reading an earlier node's committed result from another
+source node.
+
 ## Validation
 
 ```bash
@@ -306,6 +376,7 @@ Inspect the diagram for accidental missing joins, wrong branch names, or cycles.
 | Conditional classifier returns prose | Prompt it to output only the exact label |
 | Source has unconditional and conditional edges | Use one style for that source |
 | Multiple default routes from one source | Keep one fallback |
+| Shared failure route repeated on many nodes | Use `workflow.default_routes` |
 | Cycle without `loop:` | Add `loop.max_iterations` and optional `on_exhausted` |
 | Dynamic route without constraints | Add `allowed_targets` |
 | Parallel edge uses a string target | Use `to: [node_a, node_b]` |

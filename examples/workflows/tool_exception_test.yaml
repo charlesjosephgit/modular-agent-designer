@@ -37,15 +37,10 @@ agents:
   tool_caller:
     model: local
     mode: chat
+    output_schema: examples.schemas.tool_status.ToolCallStatus
     instruction: |
       Call the explode tool exactly once with this reason:
       {{state.user_input.reason}}
-
-      After the tool responds, return only valid JSON in this shape:
-      {
-        "agent_status": "success" | "fail",
-        "agent_outcome": "<outcome value>"
-      }
 
       Set agent_status to "fail" if the tool result contains an error.
       Set agent_status to "success" only if the tool completes successfully.
@@ -57,19 +52,35 @@ agents:
     model: local
     mode: chat
     instruction: |
-      The previous agent completed after a tool call.
+      The previous agent completed after a successful tool call.
       Previous agent output:
       {{state.tool_caller}}
 
-      Tell the user whether the workflow continued after the tool exception.
+      Tell the user the workflow continued because the tool call succeeded.
+
+  expected_failure_reporter:
+    model: local
+    mode: chat
+    instruction: |
+      This workflow intentionally validates the expected tool failure path.
+      Previous agent output:
+      {{state.tool_caller}}
+
+      Explain that the tool failure was handled as expected and normal success
+      processing was skipped.
 
 workflow:
   nodes:
     - tool_caller
     - final_reporter
+    - expected_failure_reporter
   entry: tool_caller
+  default_routes:
+    - to: expected_failure_reporter
+      condition:
+        eval: "output.agent_status == 'fail'"
   edges:
     - from: tool_caller
       to: final_reporter
       condition:
-        eval: "state.tool_caller.agent_status == 'success'"
+        eval: "state.get('tool_caller', {}).get('agent_status') == 'success'"

@@ -101,9 +101,71 @@ _SAFE_AST_NODES = (
 )
 
 
+class _AttrView:
+    """Read-only dot-access view over dict/list data for eval conditions."""
+
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if isinstance(self._value, dict):
+            return _wrap_attr_value(self._value.get(name))
+        raise AttributeError(name)
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(self._value, (dict, list, tuple)):
+            return _wrap_attr_value(self._value[key])
+        raise TypeError(f"{type(self._value).__name__!r} is not subscriptable")
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        if isinstance(self._value, dict):
+            return _wrap_attr_value(self._value.get(key, default))
+        return default
+
+    def __iter__(self):
+        if isinstance(self._value, (list, tuple)):
+            return iter(_wrap_attr_value(item) for item in self._value)
+        if isinstance(self._value, dict):
+            return iter(self._value)
+        raise TypeError(f"{type(self._value).__name__!r} is not iterable")
+
+    def __len__(self) -> int:
+        if isinstance(self._value, (dict, list, tuple, str)):
+            return len(self._value)
+        raise TypeError(f"{type(self._value).__name__!r} has no len()")
+
+    def __bool__(self) -> bool:
+        return bool(self._value)
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, _AttrView):
+            return self._value == other._value
+        return self._value == other
+
+    def __ne__(self, other: Any) -> bool:
+        return not self.__eq__(other)
+
+    def __str__(self) -> str:
+        return str(self._value)
+
+    def __repr__(self) -> str:
+        return repr(self._value)
+
+
+def _wrap_attr_value(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple)):
+        return _AttrView(value)
+    return value
+
+
 class _SafeEvalValidator(ast.NodeVisitor):
     def __init__(self) -> None:
-        self._names = {"state", "input", "raw_input", "re", *_SAFE_BUILTINS.keys()}
+        self._names = {
+            "state", "input", "output", "raw_input", "re",
+            *_SAFE_BUILTINS.keys(),
+        }
         self._bound_names: set[str] = set()
 
     def generic_visit(self, node: ast.AST) -> None:
@@ -121,7 +183,12 @@ class _SafeEvalValidator(ast.NodeVisitor):
             raise ValueError(f"eval condition references unknown name '{node.id}'")
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        if node.attr.startswith("_") or node.attr not in _SAFE_ATTRS:
+        if node.attr.startswith("_"):
+            raise ValueError(f"eval condition attribute '{node.attr}' is not allowed")
+        if _is_attr_view_access(node):
+            self.visit(node.value)
+            return
+        if node.attr not in _SAFE_ATTRS:
             raise ValueError(f"eval condition attribute '{node.attr}' is not allowed")
         self.visit(node.value)
 
@@ -132,6 +199,10 @@ class _SafeEvalValidator(ast.NodeVisitor):
                     f"eval condition call to '{node.func.id}' is not allowed"
                 )
         elif isinstance(node.func, ast.Attribute):
+            if node.func.attr not in _SAFE_ATTRS:
+                raise ValueError(
+                    f"eval condition call to '{node.func.attr}' is not allowed"
+                )
             self.visit(node.func)
         else:
             raise ValueError("eval condition call target is not allowed")
@@ -179,11 +250,19 @@ def _safe_eval(expr: str, state_dict: dict, output: str, raw_output: Any) -> Any
         compiled,
         {"__builtins__": _SAFE_BUILTINS, "re": re},
         {
-            "state": state_dict,
+            "state": _AttrView(state_dict),
             "input": output,
+            "output": _wrap_attr_value(raw_output),
             "raw_input": raw_output,
         },
     )
+
+
+def _is_attr_view_access(node: ast.Attribute) -> bool:
+    value = node.value
+    while isinstance(value, ast.Attribute):
+        value = value.value
+    return isinstance(value, ast.Name) and value.id in {"state", "output"}
 
 
 # State key prefix for loop iteration counters.
@@ -255,6 +334,8 @@ def build_workflow(cfg: RootConfig) -> Workflow:
             )
         else:
             static_edges.append(edge_cfg)
+
+    static_edges = _apply_default_routes(cfg, static_edges)
 
     # Separate on_error edges from normal edges.
     normal_edges = [e for e in static_edges if not e.on_error]
@@ -452,6 +533,59 @@ def build_workflow(cfg: RootConfig) -> Workflow:
         name=cfg.name,
         edges=adk_edges,
     )
+
+
+def _apply_default_routes(
+    cfg: RootConfig,
+    edges: list[EdgeConfig],
+) -> list[EdgeConfig]:
+    """Inject workflow-level conditional fallback routes.
+
+    Default routes are intentionally conservative:
+    - they do not apply to sources with explicit normal ``condition: default``;
+    - they do not apply to sources with unconditional normal routes, because
+      those routes would still fire alongside an injected conditional route;
+    - they do not apply from the handler node to itself.
+    """
+    if not cfg.workflow.default_routes:
+        return edges
+
+    result = list(edges)
+    normal_by_src: dict[str, list[EdgeConfig]] = defaultdict(list)
+    for edge in result:
+        if not edge.on_error:
+            normal_by_src[edge.from_].append(edge)
+
+    for default_route in cfg.workflow.default_routes:
+        source_names = (
+            default_route.from_
+            if default_route.from_ is not None
+            else cfg.workflow.nodes
+        )
+        excluded = set(default_route.exclude)
+        for src_name in source_names:
+            if src_name == default_route.to or src_name in excluded:
+                continue
+
+            src_normal = normal_by_src.get(src_name, [])
+            has_explicit_default = any(
+                edge.condition == "__DEFAULT__" for edge in src_normal
+            )
+            has_unconditional = any(
+                edge.condition is None for edge in src_normal
+            )
+            if has_explicit_default or has_unconditional:
+                continue
+
+            edge = EdgeConfig(
+                from_=src_name,
+                to=default_route.to,
+                condition=default_route.condition,
+            )
+            result.append(edge)
+            normal_by_src[src_name].append(edge)
+
+    return result
 
 
 def _expand_list_edges(

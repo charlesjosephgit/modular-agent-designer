@@ -72,6 +72,17 @@ def test_eval_nested_state():
     assert _matches(cond, "", {"user": {"tier": "gold"}}, None) is True
 
 
+def test_eval_output_dot_access():
+    cond = EvalCondition(eval="output.agent_status == 'fail'")
+    raw_output = {"agent_status": "fail"}
+    assert _matches(cond, "", {}, raw_output) is True
+
+
+def test_eval_state_dot_access():
+    cond = EvalCondition(eval="state.user.tier == 'gold'")
+    assert _matches(cond, "", {"user": {"tier": "gold"}}, None) is True
+
+
 # ---------------------------------------------------------------------------
 # _matches — EvalCondition: safe builtins
 # ---------------------------------------------------------------------------
@@ -285,3 +296,63 @@ def test_eval_condition_workflow_edges(tmp_path: Path):
     assert "_route_0" in routes
     assert "_route_1" in routes
     assert "_route_2" in routes
+
+
+def test_workflow_default_route_injected_for_conditional_source(tmp_path: Path):
+    yaml = textwrap.dedent("""\
+        name: default_route_test
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          src:
+            model: m
+            instruction: src
+          success:
+            model: m
+            instruction: success
+          fallback:
+            model: m
+            instruction: fallback
+        workflow:
+          nodes: [src, success, fallback]
+          entry: src
+          default_routes:
+            - to: fallback
+              condition:
+                eval: "output.status == 'fail'"
+          edges:
+            - from: src
+              to: success
+              condition:
+                eval: "state.get('src', {}).get('status') == 'success'"
+    """)
+    cfg = _load(tmp_path, yaml)
+    wf = build_workflow(cfg)
+    routes = [e.route for e in wf.edges]
+    assert "_route_0" in routes
+    assert "_route_1" in routes
+
+
+def test_workflow_default_route_target_must_exist(tmp_path: Path):
+    yaml = textwrap.dedent("""\
+        name: bad_default_route_target
+        models:
+          m:
+            provider: ollama
+            model: ollama/gemma4:e4b
+        agents:
+          src:
+            model: m
+            instruction: src
+        workflow:
+          nodes: [src]
+          entry: src
+          default_routes:
+            - to: missing
+              condition: fail
+          edges: []
+    """)
+    with pytest.raises((ValidationError, ValueError), match="default_routes target"):
+        _load(tmp_path, yaml)

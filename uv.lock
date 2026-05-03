@@ -3519,7 +3519,7 @@ wheels = [
 
 [[package]]
 name = "modular-agent-designer"
-version = "0.8.9"
+version = "0.8.10"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

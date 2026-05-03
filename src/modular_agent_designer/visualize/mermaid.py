@@ -133,4 +133,15 @@ def render_mermaid(cfg: "RootConfig") -> str:
         else:
             lines.append(f'    {src} -. "{label}" .-> {dst}')
 
+    # Workflow-level default routes are injected at build time for selected
+    # sources. Render them as dotted fallback edges.
+    for route in cfg.workflow.default_routes:
+        sources = route.from_ if route.from_ is not None else cfg.workflow.nodes
+        excluded = set(route.exclude)
+        label = _edge_label(route.condition) or "default route"
+        for src in sources:
+            if src == route.to or src in excluded:
+                continue
+            lines.append(f'    {src} -. "{label}" .-> {route.to}')
+
     return "\n".join(lines) + "\n"

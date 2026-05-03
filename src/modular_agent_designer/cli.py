@@ -428,6 +428,23 @@ def _echo_workflow_details(cfg: Any) -> None:
             click.echo(f"    {edge.from_} -> {to_str}{dec_str}")
     else:
         click.echo("  edges: (none)")
+    if wf.default_routes:
+        click.echo(f"  default_routes ({len(wf.default_routes)}):")
+        for route in wf.default_routes:
+            decorators: list[str] = []
+            c = route.condition
+            if hasattr(c, "eval"):
+                decorators.append(f"eval: {c.eval}")
+            elif isinstance(c, list):
+                decorators.append(f"if: {' | '.join(str(v) for v in c)}")
+            else:
+                decorators.append(f"if: {c}")
+            if route.from_ is not None:
+                decorators.append(f"from: {', '.join(route.from_)}")
+            if route.exclude:
+                decorators.append(f"exclude: {', '.join(route.exclude)}")
+            dec_str = f" [{', '.join(decorators)}]" if decorators else ""
+            click.echo(f"    * -> {route.to}{dec_str}")
     click.echo("")
 
 
