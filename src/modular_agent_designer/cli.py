@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import click
+from dotenv import load_dotenv
 from google.adk import Runner
 from google.adk.agents.run_config import RunConfig
 from google.adk.sessions import InMemorySessionService
@@ -24,6 +25,8 @@ from .config.loader import load_workflow
 from .plugins.dedup import DeduplicateToolCallsPlugin, _STATE_PREFIX
 from .scaffolding.templates import render as _render_scaffold
 from .workflow.builder import build_workflow
+
+load_dotenv()
 
 _APP_NAME = "modular_agent_designer"
 _USER_ID = "cli-user"
