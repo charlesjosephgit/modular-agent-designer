@@ -1,0 +1,75 @@
+# Example: tool exceptions are returned to the agent as tool output.
+#
+# The `explode` Python tool always raises RuntimeError. MAD wraps Python tools
+# so the exception becomes a tool response like:
+#   {"error": "Tool 'explode' failed with RuntimeError: ..."}
+#
+# Expected behavior:
+# - tool_caller should call `explode`
+# - the tool error should be visible to tool_caller
+# - the workflow should continue to final_reporter if the agent itself
+#   completes successfully
+# - this is different from examples/workflows/agent_failure_stop.yaml, where
+#   the agent/model call itself fails and the workflow stops
+#
+# Run from the repository root:
+#   uv run modular-agent-designer run \
+#     examples/workflows/tool_exception_test.yaml \
+#     --input '{"reason": "simulated database outage"}' \
+#     --verbose
+
+name: tool_exception_test
+description: >
+  Demonstrates that Python tool exceptions are converted into agent-visible
+  tool error outputs instead of automatically stopping the workflow.
+
+models:
+  local:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+tools:
+  explode:
+    type: python
+    ref: examples.tools.failure_tools.explode
+
+agents:
+  tool_caller:
+    model: local
+    mode: chat
+    instruction: |
+      Call the explode tool exactly once with this reason:
+      {{state.user_input.reason}}
+
+      After the tool responds, return only valid JSON in this shape:
+      {
+        "agent_status": "success" | "fail",
+        "agent_outcome": "<outcome value>"
+      }
+
+      Set agent_status to "fail" if the tool result contains an error.
+      Set agent_status to "success" only if the tool completes successfully.
+      Set agent_outcome to a concise summary of the tool result.
+      Do not retry the same tool call.
+    tools: [explode]
+
+  final_reporter:
+    model: local
+    mode: chat
+    instruction: |
+      The previous agent completed after a tool call.
+      Previous agent output:
+      {{state.tool_caller}}
+
+      Tell the user whether the workflow continued after the tool exception.
+
+workflow:
+  nodes:
+    - tool_caller
+    - final_reporter
+  entry: tool_caller
+  edges:
+    - from: tool_caller
+      to: final_reporter
+      condition:
+        eval: "state.tool_caller.agent_status == 'success'"

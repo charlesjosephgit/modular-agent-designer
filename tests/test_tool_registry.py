@@ -345,6 +345,21 @@ def test_external_sync_tool_exception_returns_error(
     }
 
 
+def test_example_failure_tool_exception_returns_error_payload() -> None:
+    cfg = PythonToolConfig(
+        type="python",
+        ref="examples.tools.failure_tools.explode",
+    )
+    tool = resolve_tool("explode", cfg)
+
+    assert tool(reason="simulated database outage") == {
+        "error": (
+            "Tool 'explode' failed with RuntimeError: "
+            "simulated database outage"
+        )
+    }
+
+
 def test_external_async_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _make_ext_pkg(tmp_path, "ext_async", "async def fetch(url: str) -> str:\n    return url\n", monkeypatch)
 

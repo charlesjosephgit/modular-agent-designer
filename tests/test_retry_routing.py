@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,8 +14,11 @@ from modular_agent_designer.config.loader import load_workflow
 from modular_agent_designer.config.schema import AgentConfig, RetryConfig
 from modular_agent_designer.nodes import agent_node
 from modular_agent_designer.nodes.agent_node import (
+    _ADK_NODE_RUNNER_LOGGERS,
     WORKFLOW_ERROR_OUTPUT_KEY,
     _compute_retry_delay,
+    _root_cause_exception,
+    _suppress_handled_adk_node_errors,
     build_agent_node,
 )
 from modular_agent_designer.workflow.builder import _error_edge_matches, build_workflow
@@ -119,6 +123,34 @@ def test_exponential_delay():
 
 def test_delay_none_config():
     assert _compute_retry_delay(None, 1) == 0
+
+
+def test_handled_agent_failures_suppress_adk_node_runner_tracebacks() -> None:
+    adk_loggers = [
+        logging.getLogger(logger_name)
+        for logger_name in _ADK_NODE_RUNNER_LOGGERS
+    ]
+    original_levels = [adk_logger.level for adk_logger in adk_loggers]
+
+    with _suppress_handled_adk_node_errors(True):
+        assert all(
+            adk_logger.level > logging.CRITICAL
+            for adk_logger in adk_loggers
+        )
+
+    assert [adk_logger.level for adk_logger in adk_loggers] == original_levels
+
+
+def test_agent_failure_unwraps_adk_dynamic_node_error() -> None:
+    class WrappedError(Exception):
+        def __init__(self) -> None:
+            self.error = RuntimeError("ollama model not found")
+            super().__init__("Dynamic node failing_agent failed")
+
+    root = _root_cause_exception(WrappedError())
+
+    assert type(root).__name__ == "RuntimeError"
+    assert str(root) == "ollama model not found"
 
 
 def test_agent_node_reraises_without_on_error(monkeypatch: pytest.MonkeyPatch):

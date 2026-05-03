@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
+import contextlib
 import logging
 import threading
 from collections import OrderedDict
@@ -28,6 +29,10 @@ from ..state.template import resolve
 from ..utils.imports import import_dotted_ref
 
 logger = logging.getLogger(__name__)
+_ADK_NODE_RUNNER_LOGGERS = (
+    "google.adk.workflow._node_runner",
+    "google_adk.google.adk.workflow._node_runner",
+)
 
 _AGENT_CACHE_MAXSIZE = 32
 WORKFLOW_ERROR_OUTPUT_KEY = "workflow_error"
@@ -205,15 +210,16 @@ def build_agent_node(
 
         for attempt in range(1, max_attempts + 1):
             try:
-                run_coro = ctx.run_node(
-                    agent, node_input=node_input, use_as_output=True,
-                )
-                if cfg.timeout_seconds is not None:
-                    result = await asyncio.wait_for(
-                        run_coro, timeout=cfg.timeout_seconds
+                with _suppress_handled_adk_node_errors(handles_errors):
+                    run_coro = ctx.run_node(
+                        agent, node_input=node_input, use_as_output=True,
                     )
-                else:
-                    result = await run_coro
+                    if cfg.timeout_seconds is not None:
+                        result = await asyncio.wait_for(
+                            run_coro, timeout=cfg.timeout_seconds
+                        )
+                    else:
+                        result = await run_coro
                 effective_output_key = cfg.output_key if cfg.output_key is not None else agent_name
                 output = state_dict.get(effective_output_key, "")
                 logger.info(
@@ -224,20 +230,21 @@ def build_agent_node(
                 return
             except Exception as exc:
                 last_exc = exc
+                root_exc = _root_cause_exception(exc)
                 if attempt < max_attempts:
                     delay = _compute_retry_delay(retry_cfg, attempt)
                     logger.warning(
                         "node '%s': attempt %d/%d failed (%s: %s), "
                         "retrying in %.1fs",
                         agent_name, attempt, max_attempts,
-                        type(exc).__name__, exc, delay,
+                        type(root_exc).__name__, root_exc, delay,
                     )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
                         "node '%s': all %d attempts failed (%s: %s)",
                         agent_name, max_attempts,
-                        type(exc).__name__, exc,
+                        type(root_exc).__name__, root_exc,
                     )
 
         if not handles_errors:
@@ -247,12 +254,15 @@ def build_agent_node(
         # All retries exhausted — write error info to state for on_error
         # routing and a public message for terminal CLI output.
         error_key = f"_error_{agent_name}"
+        root_exc = _root_cause_exception(last_exc)
         error_info = {
-            "error_type": type(last_exc).__name__,
-            "error_message": str(last_exc),
+            "error_type": type(root_exc).__name__,
+            "error_message": str(root_exc),
             "attempts": max_attempts,
         }
         error_message = _format_agent_failure(agent_name, error_info)
+        ctx.state[error_key] = error_info
+        ctx.state[WORKFLOW_ERROR_OUTPUT_KEY] = error_message
         from google.adk.events.event import Event as AdkEvent
         event = AdkEvent(
             state={
@@ -291,6 +301,36 @@ def _format_agent_failure(agent_name: str, error_info: dict[str, Any]) -> str:
         f"Agent '{agent_name}' failed{retry_note}: "
         f"{error_info['error_type']}: {error_info['error_message']}"
     )
+
+
+def _root_cause_exception(exc: Exception | None) -> Exception:
+    if exc is None:
+        return RuntimeError("unknown agent failure")
+    inner = getattr(exc, "error", None)
+    if isinstance(inner, Exception):
+        return _root_cause_exception(inner)
+    return exc
+
+
+@contextlib.contextmanager
+def _suppress_handled_adk_node_errors(enabled: bool):
+    """Suppress ADK's child-node traceback for errors handled by MAD routing."""
+    if not enabled:
+        yield
+        return
+
+    adk_loggers = [
+        logging.getLogger(logger_name)
+        for logger_name in _ADK_NODE_RUNNER_LOGGERS
+    ]
+    previous_levels = [adk_logger.level for adk_logger in adk_loggers]
+    for adk_logger in adk_loggers:
+        adk_logger.setLevel(logging.CRITICAL + 1)
+    try:
+        yield
+    finally:
+        for adk_logger, previous_level in zip(adk_loggers, previous_levels):
+            adk_logger.setLevel(previous_level)
 
 
 def _load_output_schema(ref: str | None):

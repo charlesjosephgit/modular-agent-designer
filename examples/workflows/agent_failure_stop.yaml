@@ -1,0 +1,53 @@
+# Example: agent failure without on_error stops the workflow.
+#
+# This workflow deliberately points the first agent at a nonexistent local
+# Ollama model. At runtime, `failing_agent` should fail, the workflow should
+# stop, and `must_not_run` should not execute even though there is a normal
+# edge to it.
+#
+# Run from the repository root:
+#   uv run modular-agent-designer run \
+#     examples/workflows/agent_failure_stop.yaml \
+#     --input '{"request": "show the failure behavior"}' \
+#     --verbose
+#
+# Expected final output:
+#   Agent 'failing_agent' failed: ...
+
+name: agent_failure_stop
+description: >
+  Demonstrates that an agent failure without an on_error edge stops the
+  workflow and is surfaced to the user instead of continuing to the next node.
+
+models:
+  broken:
+    provider: ollama
+    model: ollama_chat/nonexistent_model_for_failure_stop
+
+  local:
+    provider: ollama
+    model: ollama_chat/gemma4:e4b
+
+agents:
+  failing_agent:
+    model: broken
+    mode: chat
+    instruction: |
+      Respond to this request:
+      {{state.user_input.request}}
+
+  must_not_run:
+    model: local
+    mode: chat
+    instruction: |
+      If this agent runs, the failure stop behavior is broken.
+      Output exactly: ERROR - downstream agent ran after failure.
+
+workflow:
+  nodes:
+    - failing_agent
+    - must_not_run
+  entry: failing_agent
+  edges:
+    - from: failing_agent
+      to: must_not_run
