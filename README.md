@@ -581,7 +581,8 @@ Example: [`examples/workflows/sub_agent_example.yaml`](examples/workflows/sub_ag
 | `mad create <agent-name>` | Scaffold a new editable agent project |
 | `mad run <workflow.yaml> --input '<json-or-text>'` | Run a workflow |
 | `mad run <workflow.yaml> --input-file <path>` | Run using JSON or text from a file |
-| `mad run <workflow.yaml> --input '<json-or-text>' --verbose` | Stream workflow-node, agent, sub-agent, and tool events while running |
+| `mad run <workflow.yaml> --input '<json-or-text>' --verbose` | Print workflow-node, agent, sub-agent, and tool events while running |
+| `mad run <workflow.yaml> --input '<json-or-text>' --verbose-stream` | Print event output with SSE token streaming |
 | `mad validate <workflow.yaml>` | Validate and build a workflow |
 | `mad validate <workflow.yaml> --skip-build` | Validate YAML only, useful in CI without secrets |
 | `mad list <workflow.yaml>` | Print models, tools, agents, and graph details |
@@ -593,13 +594,33 @@ Useful run options:
 ```bash
 mad run workflow.yaml --dry-run --verbose
 mad run workflow.yaml --input '{"topic": "x"}' --verbose
+mad run workflow.yaml --input '{"topic": "x"}' --verbose-stream
+mad run workflow.yaml --input '{"topic": "x"}' --verbose --truncate false
+mad run workflow.yaml --input '{"topic": "x"}' --state result.json
 mad run workflow.yaml --log-level INFO --input '{"topic": "x"}'
 mad run workflow.yaml --mlflow 0 --input '{"topic": "x"}'
 ```
 
 By default, `mad run` prints the final output and final state only. Add
-`--verbose` to stream intermediate workflow-node, agent, sub-agent, and tool
-events. Use `--log-level` separately when you want Python/library logs.
+`--verbose` to print intermediate workflow-node, agent, sub-agent, and tool
+events without SSE token streaming. Use `--verbose-stream` when you want token
+streaming from the model provider.
+
+Verbose event output is grouped by workflow-node sections:
+
+```text
+Workflow Node: coordinator
+--------------------------------------------------------------------------------
+[thinking: coordinator] ...
+[tool: search_specialist] -> request='...'
+[sub-agent: search_specialist] ...
+```
+
+Long agent and tool rows are truncated by default and end with
+`... truncated`. Pass `--truncate false` to show full verbose event content, or
+`--truncate true` to enable truncation explicitly. Use `--state <path>` to
+write the displayed final state JSON to a file. Use `--log-level` separately
+when you want Python/library logs.
 
 ---
 

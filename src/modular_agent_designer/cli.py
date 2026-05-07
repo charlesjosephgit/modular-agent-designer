@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 import click
 from google.adk import Runner
-from google.adk.agents.run_config import RunConfig
+from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
@@ -157,9 +157,34 @@ def main() -> None:
     is_flag=True,
     default=False,
     help=(
-        "Stream agent/tool events. "
+        "Display agent/tool events without SSE token streaming. "
         "Dry runs also print workflow details."
     ),
+)
+@click.option(
+    "--verbose-stream",
+    "verbose_stream",
+    is_flag=True,
+    default=False,
+    help="Display agent/tool events with SSE token streaming.",
+)
+@click.option(
+    "--truncate",
+    "truncate_output",
+    type=click.BOOL,
+    default=True,
+    show_default=True,
+    help=(
+        "Truncate verbose agent/tool output. "
+        "Pass '--truncate false' to show full event content."
+    ),
+)
+@click.option(
+    "--state",
+    "state_path",
+    default=None,
+    metavar="PATH",
+    help="Write the displayed final state JSON to PATH after the workflow run.",
 )
 def run(
     yaml_path: str,
@@ -169,6 +194,9 @@ def run(
     log_level: str | None,
     dry_run: bool,
     verbose: bool,
+    verbose_stream: bool,
+    truncate_output: bool,
+    state_path: str | None,
 ) -> None:
     """Run a workflow defined in YAML_PATH with --input DATA or --input-file PATH."""
     if log_level is not None:
@@ -233,20 +261,22 @@ def run(
         _echo_workflow_details(cfg)
         return
 
-    printer = (
-        EventPrinter(
-            agent_names=cfg.agents.keys(),
-            workflow_node_names=getattr(cfg.workflow, "nodes", ()),
-        )
-        if verbose
-        else None
-    )
+    stream_events = verbose or verbose_stream
+    stream_output = verbose_stream
+    printer_options = {
+        "agent_names": cfg.agents.keys(),
+        "workflow_node_names": getattr(cfg.workflow, "nodes", ()),
+    }
+    if not truncate_output:
+        printer_options["max_line_chars"] = 0
+    printer = EventPrinter(**printer_options) if stream_events else None
     final_state = asyncio.run(
         _run_workflow(
             workflow,
             input_data,
             cfg.workflow.max_llm_calls,
             event_handler=printer.handle if printer is not None else None,
+            stream_output=stream_output,
         )
     )
     final_output_author = _resolve_final_output_author(
@@ -259,7 +289,15 @@ def run(
         final_state,
         cfg,
         final_output_author,
-        printer.last_output if printer is not None else None,
+        (
+            printer.last_output
+            if printer is not None and _has_meaningful_output(printer.last_output)
+            else (
+                printer.last_rendered_output
+                if printer is not None
+                else None
+            )
+        ),
     )
     if final_output is None:
         final_output = final_state.get(TOOL_UNAVAILABLE_OUTPUT_KEY)
@@ -269,11 +307,19 @@ def run(
         final_output_author = None
     if printer is not None:
         printer.close()
+    display_final_state = _final_state_for_display(
+        final_state,
+        cfg,
+        final_output_author,
+        final_output,
+    )
     print_final_output(
         final_output,
         final_output_author,
     )
-    print_final_state(final_state)
+    print_final_state(display_final_state)
+    if state_path is not None:
+        _write_state_file(state_path, display_final_state)
 
 
 @main.command()
@@ -465,7 +511,12 @@ def _resolve_final_output(
 
     agent_cfg = cfg.agents.get(author)
     output_key = getattr(agent_cfg, "output_key", None) or author
-    return final_state.get(output_key, fallback)
+    value = final_state.get(output_key, None)
+    if _has_meaningful_output(value):
+        return value
+    if _has_meaningful_output(fallback):
+        return fallback
+    return value if value is not None else fallback
 
 
 def _resolve_final_output_author(
@@ -490,6 +541,41 @@ def _state_has_agent_output(final_state: dict[str, Any], cfg: Any, author: str) 
     agent_cfg = cfg.agents.get(author)
     output_key = getattr(agent_cfg, "output_key", None) or author
     return output_key in final_state
+
+
+def _has_meaningful_output(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _final_state_for_display(
+    final_state: dict[str, Any],
+    cfg: Any,
+    author: str | None,
+    output: Any,
+) -> dict[str, Any]:
+    if author is None or output is None:
+        return final_state
+    agent_cfg = cfg.agents.get(author)
+    output_key = getattr(agent_cfg, "output_key", None) or author
+    if output_key in final_state and _has_meaningful_output(final_state[output_key]):
+        return final_state
+    display_state = dict(final_state)
+    display_state[output_key] = output
+    return display_state
+
+
+def _write_state_file(path: str, state: dict[str, Any]) -> None:
+    target = Path(path).expanduser()
+    if target.parent != Path("."):
+        target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(state, indent=2, default=str, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 @main.command(name="list")
@@ -633,6 +719,7 @@ async def _run_workflow(
     max_llm_calls: int = 20,
     *,
     event_handler: Callable[[Any], None] | None = None,
+    stream_output: bool = False,
 ) -> dict[str, Any]:
     session_service = InMemorySessionService()
 
@@ -665,7 +752,10 @@ async def _run_workflow(
         user_id=_USER_ID,
         session_id=session.id,
         new_message=new_message,
-        run_config=RunConfig(max_llm_calls=max_llm_calls),
+        run_config=RunConfig(
+            max_llm_calls=max_llm_calls,
+            streaming_mode=StreamingMode.SSE if stream_output else StreamingMode.NONE,
+        ),
     ):
         if event_handler is not None:
             event_handler(event)

@@ -20,6 +20,7 @@ from modular_agent_designer.cli import (
     _parse_workflow_input,
     _resolve_final_output_author,
     _resolve_final_output,
+    _final_state_for_display,
     main,
 )
 from modular_agent_designer.cli_output import (
@@ -329,11 +330,282 @@ def test_event_printer_labels_content_text_with_author(capsys) -> None:
         ),
     )
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
-    assert "╭─ greeter" in out
+    assert "Workflow Node: greeter" in out
     assert "[greeter] hello from the model" in out
+
+
+def test_event_printer_renders_thinking_parts(capsys) -> None:
+    event = Event(
+        author="greeter",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(text="considering the request", thought=True),
+                types.Part(text="visible answer"),
+            ],
+        ),
+    )
+
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert "[thinking: greeter] considering the request" in out
+    assert "[greeter] visible answer" in out
+
+
+def test_event_printer_styles_thinking_body_as_dim() -> None:
+    printer = EventPrinter(color=False)
+    row = printer._make_row(
+        "[thinking: greeter]",
+        "considering",
+        "italic bright_yellow",
+        body_style="dim",
+    )
+
+    assert row.spans[0].style == "italic bright_yellow"
+    assert row.spans[1].style == "dim"
+
+
+def test_event_printer_renders_thinking_before_tool_calls(capsys) -> None:
+    event = Event(
+        author="coordinator",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(text="I should delegate this.", thought=True),
+                types.Part(
+                    function_call=types.FunctionCall(
+                        name="search_specialist",
+                        args={"request": "summarize AI"},
+                    )
+                ),
+            ],
+        ),
+    )
+
+    printer = _printer(
+        agent_names={"coordinator", "search_specialist"},
+        workflow_node_names={"coordinator"},
+    )
+    printer.handle(event)
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.index("[thinking: coordinator]") < out.index("[tool: search_specialist]")
+
+
+def test_event_printer_skips_duplicate_final_text_after_partial_stream(capsys) -> None:
+    printer = _printer(workflow_node_names={"greeter"})
+
+    printer.handle(
+        Event(
+            author="greeter",
+            node_path="wf@1/greeter@1",
+            partial=True,
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="hello ")],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="greeter",
+            node_path="wf@1/greeter@1",
+            partial=True,
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="world")],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="greeter",
+            node_path="wf@1/greeter@1",
+            partial=False,
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="hello world")],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.count("[greeter] hello world") == 1
+
+
+def test_event_printer_accumulates_partial_thinking_in_one_row(capsys) -> None:
+    printer = _printer(workflow_node_names={"coordinator"})
+
+    for chunk in ("The ", "user ", "wants ", "AI"):
+        printer.handle(
+            Event(
+                author="coordinator",
+                node_path="wf@1/coordinator@1",
+                partial=True,
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=chunk, thought=True)],
+                ),
+            )
+        )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.count("[thinking: coordinator]") == 1
+    assert "[thinking: coordinator] The user wants AI" in out
+
+
+def test_event_printer_starts_new_thinking_row_after_tool_response(capsys) -> None:
+    printer = _printer(
+        agent_names={"coordinator", "search_specialist"},
+        workflow_node_names={"coordinator"},
+    )
+
+    printer.handle(
+        Event(
+            author="coordinator",
+            node_path="wf@1/coordinator@1",
+            partial=True,
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="First thought", thought=True)],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="coordinator",
+            node_path="wf@1/coordinator@1",
+            partial=False,
+            content=types.Content(
+                role="model",
+                parts=[
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name="search_specialist",
+                            response={"result": "background summary"},
+                        )
+                    )
+                ],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="coordinator",
+            node_path="wf@1/coordinator@1",
+            partial=True,
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="Second thought", thought=True)],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.count("[thinking: coordinator]") == 2
+    assert out.index("First thought") < out.index("[tool: search_specialist]")
+    assert out.index("[tool: search_specialist]") < out.index("Second thought")
+
+
+def test_event_printer_cleans_stream_token_spacing(capsys) -> None:
+    printer = _printer(workflow_node_names={"coordinator"})
+
+    for chunk in ("search", "_", " special", " ist", " 2", " 0", " 0", "-", " word"):
+        printer.handle(
+            Event(
+                author="coordinator",
+                node_path="wf@1/coordinator@1",
+                partial=True,
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=chunk, thought=True)],
+                ),
+            )
+        )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert "search_specialist 200-word" in out
+
+
+def test_event_printer_skips_partial_function_call_chunks(capsys) -> None:
+    printer = _printer(workflow_node_names={"greeter"})
+
+    printer.handle(
+        Event(
+            author="greeter",
+            node_path="wf@1/greeter@1",
+            partial=True,
+            content=types.Content(
+                role="model",
+                parts=[
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name="lookup",
+                            args={"q": "incomplete"},
+                        )
+                    )
+                ],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert "[tool: lookup]" not in out
+
+
+def test_event_printer_renders_section_header(capsys) -> None:
+    printer = EventPrinter(color=False)
+
+    printer._ensure_section("greeter")
+    out = capsys.readouterr().out
+
+    assert "Workflow Node: greeter" in out
+    assert "-" * 40 in out
+
+
+def test_event_printer_appends_multiple_events_to_one_panel(capsys) -> None:
+    printer = _printer(workflow_node_names={"greeter"})
+
+    printer.handle(
+        Event(
+            author="greeter",
+            node_path="wf@1/greeter@1",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="first chunk")],
+            ),
+        )
+    )
+    printer.handle(
+        Event(
+            author="greeter",
+            node_path="wf@1/greeter@1",
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="second chunk")],
+            ),
+        )
+    )
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert out.count("Workflow Node: greeter") == 1
+    assert "[greeter] first chunk" in out
+    assert "[greeter] second chunk" in out
 
 
 def test_event_printer_marks_agent_section_switches(capsys) -> None:
@@ -360,16 +632,16 @@ def test_event_printer_marks_agent_section_switches(capsys) -> None:
     printer.close()
     out = capsys.readouterr().out
 
-    assert "╭─ coordinator" in out
-    assert "╰─ end coordinator" in out
-    assert "╭─ search_specialist" in out
-    assert "╰─ end search_specialist" in out
+    assert "Workflow Node: coordinator" in out
+    assert "Workflow Node: search_specialist" in out
 
 
 def test_event_printer_labels_output_with_author(capsys) -> None:
     event = Event(author="greeter", output="node output")
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
     assert "[greeter] node output" in out
@@ -378,11 +650,14 @@ def test_event_printer_labels_output_with_author(capsys) -> None:
 def test_event_printer_json_formats_structured_output(capsys) -> None:
     event = Event(author="greeter", output={"answer": ["one", "two"]})
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
-    expected_json = json.dumps({"answer": ["one", "two"]}, indent=2)
-    assert expected_json in out
+    assert '"answer": [' in out
+    assert '"one"' in out
+    assert '"two"' in out
     assert "[greeter]" in out
 
 
@@ -399,11 +674,12 @@ def test_event_printer_renders_tool_calls(capsys) -> None:
         ),
     )
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
-    assert "[greeter] → lookup(" in out
-    assert "→ lookup(" in out
+    assert "[tool: lookup] ->" in out
     assert "q=" in out
 
 
@@ -423,11 +699,46 @@ def test_event_printer_renders_tool_responses_with_author(capsys) -> None:
         ),
     )
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
-    assert "[greeter] ← lookup" in out
+    assert "[tool: lookup] <-" in out
     assert '"result": "ok"' in out
+
+
+def test_event_printer_truncates_tool_response_on_clear_marker(capsys) -> None:
+    event = Event(
+        author="greeter",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name="analysis_specialist",
+                        response={
+                            "result": (
+                                "Please analyze Artificial Intelligence, machine "
+                                "learning, deep learning, natural language "
+                                "processing, and computer vision in detail."
+                            )
+                        },
+                    )
+                )
+            ],
+        ),
+    )
+
+    printer = EventPrinter(color=False, max_line_chars=80)
+    printer.handle(event)
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert "[tool: analysis_specialist] <-" in out
+    assert "... truncated" in out
+    assert "more chars" not in out
+    assert "detail." not in out
 
 
 def test_event_printer_truncates_tool_call_args(capsys) -> None:
@@ -446,12 +757,44 @@ def test_event_printer_truncates_tool_call_args(capsys) -> None:
         ),
     )
 
-    EventPrinter(color=False, max_line_chars=20).handle(event)
+    printer = EventPrinter(color=False, max_line_chars=20)
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
-    assert "→ transfer_to_agent(" in out
-    assert "truncated" in out
+    assert "[tool: transfer_to_agent] ->" in out
+    assert "... truncated" in out
     assert "x" * 80 not in out
+
+
+def test_event_printer_wraps_long_tool_call_args(capsys) -> None:
+    request = (
+        "Provide a comprehensive factual background summary about Artificial "
+        "Intelligence (AI), covering its definition, history, and current uses."
+    )
+    event = Event(
+        author="coordinator",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(
+                    function_call=types.FunctionCall(
+                        name="search_specialist",
+                        args={"request": request},
+                    )
+                )
+            ],
+        ),
+    )
+
+    printer = EventPrinter(color=False, max_line_chars=0)
+    printer.handle(event)
+    printer.close()
+    out = capsys.readouterr().out
+
+    assert "[tool: search_specialist] ->" in out
+    assert "Artificial Intelligence" in out
+    assert "current uses" in out
 
 
 def test_event_printer_omits_tool_call_closing_paren_when_truncated(capsys) -> None:
@@ -470,11 +813,13 @@ def test_event_printer_omits_tool_call_closing_paren_when_truncated(capsys) -> N
         ),
     )
 
-    EventPrinter(color=True, max_line_chars=20).handle(event)
+    printer = EventPrinter(color=True, max_line_chars=20)
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
-    assert "truncated" in out
-    assert not out.rstrip().endswith(")")
+    assert "... truncated" in out
+    assert "x" * 80 not in out
 
 
 def test_event_printer_deduplicates_content_and_output(capsys) -> None:
@@ -487,7 +832,9 @@ def test_event_printer_deduplicates_content_and_output(capsys) -> None:
         output="same value",
     )
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
     assert out.count("[greeter] same value") == 1
@@ -508,7 +855,9 @@ def test_event_printer_uses_node_info_name_over_author(capsys) -> None:
         ),
     )
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
     assert "[researcher] searching now" in out
@@ -524,7 +873,9 @@ def test_event_printer_falls_back_to_author_when_node_info_empty(capsys) -> None
         ),
     )
 
-    _printer().handle(event)
+    printer = _printer()
+    printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
     assert "[user_supplied] raw event" in out
@@ -550,6 +901,7 @@ def test_event_printer_attributes_subagent_event_to_subagent(capsys) -> None:
         agent_names={"coordinator", "search_specialist", "analysis_specialist"}
     )
     printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
     assert "[search_specialist] found 3 articles" in out
@@ -585,10 +937,9 @@ def test_event_printer_groups_subagent_under_workflow_node(capsys) -> None:
     printer.close()
     out = capsys.readouterr().out
 
-    assert out.count("╭─ coordinator") == 1
-    assert out.count("╰─ end coordinator") == 1
-    assert "╭─ search_specialist" not in out
-    assert "[coordinator] delegating\n\n[sub-agent: search_specialist]" in out
+    assert out.count("Workflow Node: coordinator") == 1
+    assert "Workflow Node: search_specialist" not in out
+    assert "[coordinator] delegating" in out
     assert "[sub-agent: search_specialist] found 3 articles" in out
 
 
@@ -628,8 +979,9 @@ def test_event_printer_keeps_subagent_in_current_workflow_section(capsys) -> Non
     printer.close()
     out = capsys.readouterr().out
 
-    assert out.count("╭─ coordinator") == 1
-    assert "╭─ search_specialist" not in out
+    assert out.count("Workflow Node: coordinator") == 1
+    assert "Workflow Node: search_specialist" not in out
+    assert "[tool: search_specialist] ->" in out
     assert "[sub-agent: search_specialist] AI summary" in out
 
 
@@ -652,6 +1004,7 @@ def test_event_printer_falls_through_synthetic_router_with_agent_names(capsys) -
         workflow_node_names={"validator", "process_node", "reject_node"},
     )
     printer.handle(event)
+    printer.close()
     out = capsys.readouterr().out
 
     assert "[node: validator_router] routing" in out
@@ -782,6 +1135,35 @@ def test_event_printer_uses_text_when_output_unset(capsys) -> None:
     assert printer.last_output_author == "writer"
 
 
+def test_event_printer_tracks_last_rendered_tool_result(capsys) -> None:
+    printer = _printer(
+        agent_names={"coordinator", "analysis_specialist"},
+        workflow_node_names={"coordinator"},
+    )
+    event = Event(
+        author="coordinator",
+        node_path="wf@1/coordinator@1",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name="analysis_specialist",
+                        response={"result": "analysis complete"},
+                    )
+                )
+            ],
+        ),
+    )
+
+    printer.handle(event)
+    capsys.readouterr()
+
+    assert printer.last_output is None
+    assert printer.last_rendered_output == "analysis complete"
+    assert printer.last_workflow_node == "coordinator"
+
+
 def test_resolve_final_output_prefers_state_value() -> None:
     cfg = SimpleNamespace(
         agents={"coordinator": SimpleNamespace(output_key=None)}
@@ -795,6 +1177,22 @@ def test_resolve_final_output_prefers_state_value() -> None:
             "event payload",
         )
         == "committed final state"
+    )
+
+
+def test_resolve_final_output_uses_fallback_when_state_value_blank() -> None:
+    cfg = SimpleNamespace(
+        agents={"coordinator": SimpleNamespace(output_key=None)}
+    )
+
+    assert (
+        _resolve_final_output(
+            {"coordinator": ""},
+            cfg,
+            "coordinator",
+            "streamed fallback",
+        )
+        == "streamed fallback"
     )
 
 
@@ -849,6 +1247,54 @@ def test_resolve_final_output_author_ignores_subagent_author() -> None:
         )
         == "coordinator"
     )
+
+
+def test_final_state_for_display_includes_fallback_output() -> None:
+    cfg = SimpleNamespace(
+        agents={"coordinator": SimpleNamespace(output_key=None)}
+    )
+
+    state = {"user_input": {"topic": "AI"}}
+    display = _final_state_for_display(
+        state,
+        cfg,
+        "coordinator",
+        "fallback answer",
+    )
+
+    assert display == {
+        "user_input": {"topic": "AI"},
+        "coordinator": "fallback answer",
+    }
+    assert state == {"user_input": {"topic": "AI"}}
+
+
+def test_final_state_for_display_replaces_blank_output() -> None:
+    cfg = SimpleNamespace(
+        agents={"coordinator": SimpleNamespace(output_key=None)}
+    )
+
+    display = _final_state_for_display(
+        {"user_input": {"topic": "AI"}, "coordinator": ""},
+        cfg,
+        "coordinator",
+        "fallback answer",
+    )
+
+    assert display["coordinator"] == "fallback answer"
+
+
+def test_final_state_for_display_honors_output_key() -> None:
+    cfg = SimpleNamespace(
+        agents={"coordinator": SimpleNamespace(output_key="final_brief")}
+    )
+
+    assert _final_state_for_display(
+        {"user_input": {"topic": "AI"}},
+        cfg,
+        "coordinator",
+        "fallback answer",
+    )["final_brief"] == "fallback answer"
 
 
 def test_validate_missing_file(tmp_path: Path) -> None:
@@ -1055,6 +1501,51 @@ def test_run_accepts_plain_string_input(tmp_path: Path, monkeypatch: pytest.Monk
     assert '"user_input": "plain text request"' in result.output
 
 
+def test_run_state_file_writes_display_final_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    store = tmp_path / "result.json"
+
+    import modular_agent_designer.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "load_workflow",
+        lambda yaml_path: SimpleNamespace(
+            name="hello",
+            agents={"greeter": SimpleNamespace(output_key=None)},
+            workflow=SimpleNamespace(nodes=["greeter"], max_llm_calls=20),
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "build_workflow", lambda cfg: object())
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        return {"user_input": input_data, "greeter": "stored answer"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            str(p),
+            "--input",
+            '{"topic": "x"}',
+            "--state",
+            str(store),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(store.read_text(encoding="utf-8")) == {
+        "user_input": {"topic": "x"},
+        "greeter": "stored answer",
+    }
+
+
 def test_run_input_file_accepts_plain_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "wf.yaml"
     p.write_text(_VALID_YAML)
@@ -1128,7 +1619,10 @@ def test_run_verbose_prints_streamed_events_before_final_state(
 
     import modular_agent_designer.cli as cli_mod
 
+    seen: dict[str, Any] = {}
+
     async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        seen["stream_output"] = kwargs.get("stream_output")
         event_handler = kwargs.get("event_handler")
         if event_handler is not None:
             event_handler(
@@ -1152,8 +1646,364 @@ def test_run_verbose_prints_streamed_events_before_final_state(
 
     assert result.exit_code == 0
     assert result.output.index("streamed event") < result.output.index("Final State")
-    assert "╭─ greeter" in result.output
+    assert "Workflow Node: greeter" in result.output
     assert '"greeter": "done"' in result.output
+    assert seen["stream_output"] is False
+
+
+def test_run_verbose_truncates_streamed_events_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    long_text = "start " + ("x" * 700) + " full-tail"
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=long_text)],
+                    ),
+                )
+            )
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["run", str(p), "--input", '{"topic": "x"}', "--verbose"]
+    )
+
+    assert result.exit_code == 0
+    assert "... truncated" in result.output
+    assert "full-tail" not in result.output
+
+
+def test_run_verbose_can_enable_streamed_event_truncation_explicitly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    long_text = "start " + ("x" * 700) + " full-tail"
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=long_text)],
+                    ),
+                )
+            )
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            str(p),
+            "--input",
+            '{"topic": "x"}',
+            "--verbose",
+            "--truncate",
+            "true",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "... truncated" in result.output
+    assert "full-tail" not in result.output
+
+
+def test_run_verbose_stream_truncates_partial_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            for chunk in ("start ", "x" * 700, " full-tail"):
+                event_handler(
+                    Event(
+                        author="greeter",
+                        node_path="wf@1/greeter@1",
+                        partial=True,
+                        content=types.Content(
+                            role="model",
+                            parts=[types.Part(text=chunk)],
+                        ),
+                    )
+                )
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            str(p),
+            "--input",
+            '{"topic": "x"}',
+            "--verbose-stream",
+            "--truncate",
+            "true",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "... truncated" in result.output
+    assert "full-tail" not in result.output
+
+
+def test_run_verbose_can_disable_streamed_event_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    long_text = "start " + ("x" * 700) + " full-tail"
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=long_text)],
+                    ),
+                )
+            )
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            str(p),
+            "--input",
+            '{"topic": "x"}',
+            "--verbose",
+            "--truncate",
+            "false",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "... truncated" not in result.output
+    assert "full-tail" in result.output
+
+
+def test_run_verbose_stream_prints_streamed_events_with_sse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+    seen: dict[str, Any] = {}
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        seen["stream_output"] = kwargs.get("stream_output")
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text="streamed with stream flag")],
+                    ),
+                )
+            )
+        return {"greeter": "done"}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["run", str(p), "--input", '{"topic": "x"}', "--verbose-stream"]
+    )
+
+    assert result.exit_code == 0
+    assert "streamed with stream flag" in result.output
+    assert "Workflow Node: greeter" in result.output
+    assert '"greeter": "done"' in result.output
+    assert seen["stream_output"] is True
+
+
+def test_run_verbose_falls_back_to_streamed_tool_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[
+                            types.Part(
+                                function_response=types.FunctionResponse(
+                                    name="analysis_specialist",
+                                    response={"result": "streamed fallback answer"},
+                                )
+                            )
+                        ],
+                    ),
+                )
+            )
+        return {"user_input": input_data}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["run", str(p), "--input", '{"topic": "x"}', "--verbose"]
+    )
+
+    assert result.exit_code == 0
+    assert "Final Output (greeter)" in result.output
+    assert "streamed fallback answer" in result.output
+    assert '"greeter": "streamed fallback answer"' in result.output
+
+
+def test_run_verbose_replaces_blank_state_with_streamed_tool_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+
+    import modular_agent_designer.cli as cli_mod
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[
+                            types.Part(
+                                function_response=types.FunctionResponse(
+                                    name="analysis_specialist",
+                                    response={"result": "streamed answer"},
+                                )
+                            )
+                        ],
+                    ),
+                )
+            )
+        return {"user_input": input_data, "greeter": ""}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["run", str(p), "--input", '{"topic": "x"}', "--verbose"]
+    )
+
+    assert result.exit_code == 0
+    assert "Final Output (greeter)" in result.output
+    assert "streamed answer" in result.output
+    assert '"greeter": "streamed answer"' in result.output
+    assert '"greeter": ""' not in result.output
+
+
+def test_run_state_file_uses_fallback_display_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "wf.yaml"
+    p.write_text(_VALID_YAML)
+    store = tmp_path / "nested" / "result.json"
+
+    import modular_agent_designer.cli as cli_mod
+
+    async def _fake_run(workflow, input_data, max_llm_calls=20, **kwargs):
+        event_handler = kwargs.get("event_handler")
+        if event_handler is not None:
+            event_handler(
+                Event(
+                    author="greeter",
+                    node_path="wf@1/greeter@1",
+                    content=types.Content(
+                        role="model",
+                        parts=[
+                            types.Part(
+                                function_response=types.FunctionResponse(
+                                    name="analysis_specialist",
+                                    response={"result": "streamed answer"},
+                                )
+                            )
+                        ],
+                    ),
+                )
+            )
+        return {"user_input": input_data, "greeter": ""}
+
+    monkeypatch.setattr(cli_mod, "_run_workflow", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            str(p),
+            "--input",
+            '{"topic": "x"}',
+            "--verbose",
+            "--state",
+            str(store),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(store.read_text(encoding="utf-8")) == {
+        "user_input": {"topic": "x"},
+        "greeter": "streamed answer",
+    }
 
 
 def test_run_input_file_not_found(tmp_path: Path) -> None:

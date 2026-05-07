@@ -223,14 +223,32 @@ normal downstream edges.
 | `mad diagram <workflow.yaml>` | Render a Mermaid graph, including default-route fallback edges |
 | `mad run <workflow.yaml> --input '{"key":"value"}'` | Execute a workflow |
 | `mad run <workflow.yaml> --input-file input.json` | Execute using JSON from a file |
-| `mad run <workflow.yaml> --input '{"key":"value"}' --verbose` | Execute and stream workflow-node, agent, sub-agent, and tool events |
+| `mad run <workflow.yaml> --input '{"key":"value"}' --verbose` | Execute and print workflow-node, agent, sub-agent, and tool events without SSE token streaming |
+| `mad run <workflow.yaml> --input '{"key":"value"}' --verbose-stream` | Execute and print event output with SSE token streaming |
+| `mad run <workflow.yaml> --input '{"key":"value"}' --verbose --truncate false` | Show full verbose event content instead of truncating long rows |
+| `mad run <workflow.yaml> --input '{"key":"value"}' --state result.json` | Write the displayed final state JSON to a file |
 | `mad run <workflow.yaml> --dry-run` | Load and build without model execution |
 | `mad run <workflow.yaml> --log-level INFO --input '{"key":"value"}'` | Execute with Python/library logging enabled |
 | `mad cli-skills setup` | Install assistant skills into `.agents/skills` |
 
-`mad run` prints final output and final state by default. Add `--verbose` only
-when you need the intermediate event stream; use `--log-level` separately for
-library logs.
+`mad run` prints final output and final state by default. Add `--verbose` when
+you need intermediate workflow-node, agent, sub-agent, and tool events without
+SSE token streaming. Use `--verbose-stream` when token streaming is needed.
+Verbose output is grouped by workflow-node headers and divider lines, not live
+boxes:
+
+```text
+Workflow Node: coordinator
+--------------------------------------------------------------------------------
+[thinking: coordinator] ...
+[tool: search_specialist] -> request='...'
+[sub-agent: search_specialist] ...
+```
+
+Verbose agent and tool rows truncate by default and end with `... truncated`.
+Pass `--truncate false` to show full verbose event content, or
+`--truncate true` to enable truncation explicitly. Use `--log-level` separately
+for library logs.
 
 ## Common Mistakes
 

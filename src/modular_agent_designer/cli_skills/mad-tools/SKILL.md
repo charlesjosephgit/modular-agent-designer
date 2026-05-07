@@ -26,7 +26,7 @@ Load `mad-create-workflow` for end-to-end workflow creation, `mad-routing` for g
 3. Give every tool a clear YAML alias and attach that alias to only the agents that need it.
 4. For MCP servers, prefer `tool_filter` and `tool_name_prefix` to reduce ambiguity.
 5. Validate with `mad list` and `mad run --dry-run`.
-6. Use `mad run ... --verbose` only when you need the tool-call event stream.
+6. Use `mad run ... --verbose` when you need tool-call events without SSE token streaming. Use `mad run ... --verbose-stream` when token streaming is needed.
 
 ## Tool Type Decision
 
@@ -267,7 +267,21 @@ workflow:
 ```bash
 mad list workflows/my_workflow.yaml
 mad run workflows/my_workflow.yaml --dry-run
+mad run workflows/my_workflow.yaml --input '{"topic": "x"}' --verbose
+mad run workflows/my_workflow.yaml --input '{"topic": "x"}' --verbose-stream
 ```
+
+Verbose tool events are grouped under workflow-node section headers:
+
+```text
+Workflow Node: coordinator
+--------------------------------------------------------------------------------
+[tool: fetch_url] -> url='https://example.com'
+[tool: fetch_url] <- {"status":"ok"}
+```
+
+Long tool args and responses truncate by default with `... truncated`. Pass
+`--truncate false` to inspect full tool payloads.
 
 For a live run, make sure required MCP servers, subprocess commands, env vars, and model credentials are available.
 

@@ -47,7 +47,22 @@ When using these skills, a coding agent should:
 3. Make the smallest workflow change that satisfies the user request.
 4. Validate with `mad list`, `mad diagram`, and `mad run --dry-run` when the workflow can be built without secrets or services.
 5. Run a real `mad run ... --input ...` only when model credentials and local services are available.
-6. Add `--verbose` to `mad run` only when you need the intermediate workflow-node, agent, sub-agent, and tool event stream. Final output and final state print by default.
+6. Add `--verbose` to `mad run` when you need intermediate workflow-node, agent, sub-agent, and tool events without SSE token streaming. Use `--verbose-stream` when token streaming is needed. Final output and final state print by default.
+
+Verbose run output is grouped by workflow-node sections:
+
+```text
+Workflow Node: coordinator
+--------------------------------------------------------------------------------
+[thinking: coordinator] ...
+[tool: search_specialist] -> request='...'
+[sub-agent: search_specialist] ...
+```
+
+Verbose agent and tool rows truncate by default and end with `... truncated`.
+Use `--truncate false` for full verbose event content, `--truncate true` to
+enable truncation explicitly, and `--state <path>` to write the displayed
+final state JSON to a file.
 
 Use `mad-routing` for `workflow.default_routes` and eval route conditions such
 as `output.agent_status == 'fail'`. Use `mad-tools` for Python tool exceptions,

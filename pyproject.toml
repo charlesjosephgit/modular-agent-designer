@@ -1,6 +1,6 @@
 [project]
 name = "modular-agent-designer"
-version = "0.9.0"
+version = "0.9.1"
 description = "A modular framework for designing and orchestrating complex agentic workflows with ease."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,7 @@ dependencies = [
     "pyyaml>=6",
     "httpx>=0.27",
     "click>=8",
+    "rich>=14",
 ]
 
 [project.scripts]
